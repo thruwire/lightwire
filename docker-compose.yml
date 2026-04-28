@@ -1,0 +1,16 @@
+services:
+  thruflow:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./workspace:/app/workspace:ro
+      - thruflow_data:/app/data
+    environment:
+      WORKSPACE_PATH: /app/workspace
+      SQLITE_PATH: /app/data/thruflow.db
+
+volumes:
+  thruflow_data:

@@ -1,0 +1,9 @@
+enabled: true
+poll_interval_seconds: 10
+
+allowed_chats:
+  - chat_id: "123456789"
+    route_key: default
+
+ignore_bot_messages: true
+send_replies: true

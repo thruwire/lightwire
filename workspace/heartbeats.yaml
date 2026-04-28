@@ -1,0 +1,7 @@
+heartbeats:
+  - id: research_scout
+    enabled: true
+    interval_seconds: 3600
+    target:
+      agent_id: researcher
+      prompt_template: prompt_templates/heartbeat_research_scout.md

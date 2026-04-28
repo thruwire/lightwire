@@ -1,0 +1,20 @@
+agent_id: analyst
+enabled: true
+display_name: Analyst
+description: Evaluates findings, tradeoffs, and risks.
+provider: claude_managed_agents
+
+memory:
+  access: read_write
+
+skills:
+  - structured_notes
+
+tools:
+  built_in:
+    - read
+    - web_fetch
+  mcp:
+    external_research:
+      allow:
+        - fetch_document

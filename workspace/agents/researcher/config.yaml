@@ -1,0 +1,22 @@
+agent_id: researcher
+enabled: true
+display_name: Researcher
+description: Researches a topic and writes structured findings.
+provider: claude_managed_agents
+
+memory:
+  access: read_write
+
+skills:
+  - structured_notes
+
+tools:
+  built_in:
+    - read
+    - web_fetch
+    - web_search
+  mcp:
+    external_research:
+      allow:
+        - search_documents
+        - fetch_document

@@ -1,0 +1,20 @@
+built_in:
+  read:
+    enabled: true
+    permission_policy: always_allow
+  web_fetch:
+    enabled: true
+    permission_policy: always_allow
+  web_search:
+    enabled: true
+    permission_policy: always_allow
+
+mcp_servers:
+  external_research:
+    enabled: true
+    type: url
+    url: ${EXTERNAL_RESEARCH_MCP_URL:-https://example.com/mcp}
+    auth:
+      type: static_bearer_env
+      token_env_var: EXTERNAL_RESEARCH_MCP_TOKEN
+    permission_policy: always_allow

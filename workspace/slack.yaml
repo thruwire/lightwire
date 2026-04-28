@@ -1,0 +1,6 @@
+enabled: true
+poll_interval_seconds: 10
+channels:
+  - channel_id: "C123456"
+    include_threads: true
+ignore_bot_messages: true

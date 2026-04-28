@@ -1,0 +1,15 @@
+agent_id: brief_writer
+enabled: true
+display_name: Brief Writer
+description: Produces concise executive briefs from upstream analysis.
+provider: claude_managed_agents
+
+memory:
+  access: read_write
+
+skills:
+  - structured_notes
+
+tools:
+  built_in:
+    - read

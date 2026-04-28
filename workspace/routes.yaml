@@ -1,0 +1,50 @@
+routes:
+  - id: slack_to_research
+    enabled: true
+    match:
+      source: slack
+      type: message.created
+    target:
+      agent_id: researcher
+      prompt_template: prompt_templates/api_to_research.md
+
+  - id: api_to_research
+    enabled: true
+    match:
+      source: api
+      type: message.created
+    target:
+      agent_id: researcher
+      prompt_template: prompt_templates/api_to_research.md
+
+  - id: telegram_to_research
+    enabled: true
+    match:
+      source: telegram
+      type: message.created
+    target:
+      agent_id: researcher
+      prompt_template: prompt_templates/api_to_research.md
+
+  - id: research_to_analysis
+    enabled: true
+    match:
+      source: agent_output
+      type: agent.completed
+      agent_id: researcher
+    target:
+      agent_id: analyst
+      prompt_template: prompt_templates/research_to_analysis.md
+
+  - id: analysis_to_brief
+    enabled: true
+    match:
+      source: agent_output
+      type: agent.completed
+      agent_id: analyst
+    target:
+      agent_id: brief_writer
+      prompt_template: prompt_templates/analysis_to_brief.md
+    reply:
+      connector: telegram
+      mode: final_output

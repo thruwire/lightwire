@@ -1,0 +1,27 @@
+name: Deploy Managed Agents
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install .
+
+      - name: Deploy or update managed agents
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          WORKSPACE_PATH: ./workspace
+          THRUFLOW_FAKE_CLAUDE: "false"
+        run: python scripts/deploy_managed_agents.py
