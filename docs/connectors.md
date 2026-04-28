@@ -9,17 +9,23 @@ ThruFlow connectors are responsible for:
 
 ## Slack
 
-Slack uses the Web API and a polling model.
+Slack uses Socket Mode by default and keeps Web API polling as a fallback mode.
 
 Main behavior:
 
+- receive Events API envelopes over a Socket Mode WebSocket connection
+- acknowledge Slack envelopes quickly before dispatching long-running work
+- normalize supported message events into `source=slack`
+- deduplicate redelivered events by Slack event ID, or by `channel:ts` when event ID is absent
 - poll configured channels with `conversations.history`
 - optionally poll thread roots with `conversations.replies`
 - ignore bot messages by default
 - store per-channel and per-thread cursors in SQLite
-- convert new messages into normalized `source=slack` events
+- convert new messages into normalized `source=slack` events when polling fallback is enabled
 
 Slack config lives in `workspace/slack.yaml`.
+
+Socket Mode is the default. Polling should only be used for fallback or backfill.
 
 ## Telegram
 
@@ -60,7 +66,7 @@ Example normalized message payload:
 
 ## Reply Flow
 
-Connectors only generate inbound messages by default. Telegram also supports optional outbound replies.
+Connectors generate inbound messages by default. Telegram and Slack can also send optional final-output replies.
 
 For v1, a route can declare:
 
@@ -78,6 +84,8 @@ When the matching session completes:
 4. When available, the original `message_id` is used as `reply_to_message_id`.
 
 This keeps reply behavior attached to route intent rather than embedding it inside the provider adapter.
+
+Slack replies use `chat.postMessage` and reply in-thread when the root Slack message provides `thread_ts` or `ts`.
 
 ## Adding a New Connector
 

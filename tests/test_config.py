@@ -16,6 +16,7 @@ def test_load_runtime_config() -> None:
     assert "external_research" in config.agents["researcher"].tools.mcp
     assert "prompt_templates/api_to_research.md" in config.prompt_templates
     assert config.telegram.enabled is True
+    assert config.slack.mode.value == "socket"
     assert config.telegram.allowed_chats[0].chat_id == "123456789"
 
 

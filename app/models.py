@@ -162,11 +162,30 @@ class SlackChannelConfig(BaseModel):
     include_threads: bool = True
 
 
+class SlackMode(str, Enum):
+    SOCKET = "socket"
+    POLLING = "polling"
+    WEBHOOK = "webhook"
+
+
+class SlackSocketConfig(BaseModel):
+    reconnect: bool = True
+    ack_timeout_seconds: int = 3
+
+
+class SlackPollingConfig(BaseModel):
+    enabled: bool = False
+    poll_interval_seconds: int = 30
+
+
 class SlackConfig(BaseModel):
     enabled: bool = False
-    poll_interval_seconds: int = 10
+    mode: SlackMode = SlackMode.SOCKET
+    socket: SlackSocketConfig = Field(default_factory=SlackSocketConfig)
+    polling: SlackPollingConfig = Field(default_factory=SlackPollingConfig)
     channels: list[SlackChannelConfig] = Field(default_factory=list)
     ignore_bot_messages: bool = True
+    send_replies: bool = True
 
 
 class TelegramAllowedChatConfig(BaseModel):

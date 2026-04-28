@@ -7,7 +7,8 @@ This page documents every workspace YAML file and the main environment variables
 `.env.example` shows the current env surface:
 
 - `ANTHROPIC_API_KEY`: provider API key for live Claude calls
-- `SLACK_BOT_TOKEN`: Slack polling connector token
+- `SLACK_BOT_TOKEN`: Slack bot token for Socket Mode, replies, and polling fallback
+- `SLACK_APP_TOKEN`: Slack Socket Mode app-level token
 - `TELEGRAM_BOT_TOKEN`: Telegram Bot API token
 - `WORKSPACE_PATH`: workspace root, defaults to `./workspace`
 - `SQLITE_PATH`: SQLite database path
@@ -144,25 +145,54 @@ Fields:
 ## `workspace/slack.yaml`
 
 Purpose:
-- configure the Slack polling connector
+- configure the Slack connector, with Socket Mode as the default
 
 Shape:
 
 ```yaml
 enabled: true
-poll_interval_seconds: 10
+mode: socket
+
+socket:
+  reconnect: true
+  ack_timeout_seconds: 3
+
+polling:
+  enabled: false
+  poll_interval_seconds: 30
+
 channels:
   - channel_id: C123456
     include_threads: true
 ignore_bot_messages: true
+send_replies: true
 ```
 
 Fields:
 
 - `enabled`
-- `poll_interval_seconds`
+- `mode`: `socket`, `polling`, or `webhook`
+- `socket`
+- `polling`
 - `channels`
 - `ignore_bot_messages`
+- `send_replies`
+
+Notes:
+
+- If `mode` is missing, it defaults to `socket`.
+- `webhook` is reserved for future use and is not implemented in this repo yet.
+- Polling is fallback-only and should not be run as the primary real-time ingestion path.
+
+`socket` fields:
+
+- `reconnect`
+- `ack_timeout_seconds`
+
+`polling` fields:
+
+- `enabled`
+- `poll_interval_seconds`
 
 Channel fields:
 

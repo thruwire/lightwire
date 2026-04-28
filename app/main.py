@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException
@@ -10,7 +10,7 @@ from app.claude.client import ClaudeManagedAgentClient
 from app.claude.resources import ClaudeProviderResourceService
 from app.claude.sessions import ClaudeSessionService
 from app.config import RuntimeConfig, Settings, load_runtime_config
-from app.connectors.slack import SlackPoller
+from app.connectors.slack import SlackConnector
 from app.connectors.telegram import TelegramConnector
 from app.db.sqlite import (
     SqliteAgentOutputRepository,
@@ -48,9 +48,8 @@ class AppState:
     resources: ClaudeProviderResourceService
     dispatcher: Dispatcher
     heartbeat_scheduler: HeartbeatScheduler
-    slack_poller: SlackPoller
+    slack_connector: SlackConnector
     telegram_connector: TelegramConnector
-    slack_task: asyncio.Task[None] | None = None
 
 
 def get_state(app: FastAPI) -> AppState:
@@ -83,11 +82,12 @@ def build_state(settings: Settings | None = None) -> AppState:
         runner=SessionRunner(config, resources, session_service, sessions, outputs, output_handler),
         output_handler=output_handler,
     )
+    slack_connector = SlackConnector(config, cursors, dispatcher.dispatch)
     telegram_connector = TelegramConnector(config, cursors, dispatcher.dispatch)
-    # The dispatcher owns reply logic, so it needs a handle back to the Telegram connector after construction.
+    # The dispatcher owns reply logic, so it needs connector handles after construction.
+    dispatcher.slack_connector = slack_connector
     dispatcher.telegram_connector = telegram_connector
     heartbeat_scheduler = HeartbeatScheduler(config, heartbeats, dispatcher)
-    slack_poller = SlackPoller(config, cursors)
     return AppState(
         config=config,
         db=db,
@@ -102,17 +102,9 @@ def build_state(settings: Settings | None = None) -> AppState:
         resources=resources,
         dispatcher=dispatcher,
         heartbeat_scheduler=heartbeat_scheduler,
-        slack_poller=slack_poller,
+        slack_connector=slack_connector,
         telegram_connector=telegram_connector,
     )
-
-
-async def _slack_loop(state: AppState) -> None:
-    while True:
-        # Slack polling is intentionally separate from Telegram so each connector can keep its own cursor strategy.
-        for message in await state.slack_poller.poll():
-            await state.dispatcher.dispatch(message)
-        await asyncio.sleep(state.config.slack.poll_interval_seconds)
 
 
 @asynccontextmanager
@@ -123,18 +115,14 @@ async def lifespan(app: FastAPI):
     await state.resources.ensure()
     await state.resources.ensure_all_agent_vaults()
     await state.heartbeat_scheduler.start()
-    if state.config.slack.enabled and state.config.settings.slack_bot_token:
-        state.slack_task = asyncio.create_task(_slack_loop(state))
+    await state.slack_connector.start()
     await state.telegram_connector.start()
     try:
         yield
     finally:
         await state.heartbeat_scheduler.stop()
+        await state.slack_connector.stop()
         await state.telegram_connector.stop()
-        if state.slack_task:
-            state.slack_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await state.slack_task
 
 
 def create_app() -> FastAPI:

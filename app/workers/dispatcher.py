@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.connectors.slack import SlackConnector
 from app.models import NormalizedMessage
 from app.repositories.messages import MessageRepository
 from app.repositories.sessions import SessionRepository
@@ -18,6 +19,7 @@ class Dispatcher:
         runner: SessionRunner,
         output_handler: OutputHandler,
         telegram_connector: TelegramConnector | None = None,
+        slack_connector: SlackConnector | None = None,
     ) -> None:
         self.messages = messages
         self.sessions = sessions
@@ -25,6 +27,7 @@ class Dispatcher:
         self.runner = runner
         self.output_handler = output_handler
         self.telegram_connector = telegram_connector
+        self.slack_connector = slack_connector
 
     async def dispatch(self, message: NormalizedMessage) -> list[str]:
         # Every event is persisted before routing so downstream debugging can reconstruct the full correlation chain.
@@ -49,11 +52,18 @@ class Dispatcher:
         reply = output_message.metadata.get("reply")
         if not isinstance(reply, dict):
             return
-        if reply.get("connector") != "telegram" or reply.get("mode") != "final_output":
-            return
-        if not self.telegram_connector or not self.telegram_connector.config.telegram.send_replies:
+        if reply.get("mode") != "final_output":
             return
         root_message = self._find_root_message(parent_message)
+        if reply.get("connector") == "telegram":
+            await self._reply_telegram(output_message, root_message)
+            return
+        if reply.get("connector") == "slack":
+            await self._reply_slack(output_message, root_message)
+
+    async def _reply_telegram(self, output_message: NormalizedMessage, root_message: NormalizedMessage) -> None:
+        if not self.telegram_connector or not self.telegram_connector.config.telegram.send_replies:
+            return
         if root_message.source.value != "telegram":
             return
         chat_id = root_message.payload.get("chat_id")
@@ -65,6 +75,27 @@ class Dispatcher:
             text=str(output_message.payload.get("content", "")),
             reply_to_message_id=reply_to_message_id if isinstance(reply_to_message_id, int) else None,
         )
+
+    async def _reply_slack(self, output_message: NormalizedMessage, root_message: NormalizedMessage) -> None:
+        if not self.slack_connector or not self.slack_connector.config.slack.send_replies:
+            return
+        if root_message.source.value != "slack":
+            return
+        channel = root_message.payload.get("channel")
+        if not channel:
+            return
+        thread_ts = root_message.payload.get("thread_ts") or root_message.payload.get("ts")
+        await self.slack_connector.send_message(
+            channel=str(channel),
+            text=self._truncate_reply(str(output_message.payload.get("summary") or output_message.payload.get("content", ""))),
+            thread_ts=str(thread_ts) if thread_ts else None,
+        )
+
+    def _truncate_reply(self, text: str, max_length: int = 900) -> str:
+        compact = " ".join(text.split())
+        if len(compact) <= max_length:
+            return compact
+        return compact[: max_length - 3].rstrip() + "..."
 
     def _find_root_message(self, message: NormalizedMessage) -> NormalizedMessage:
         current = message

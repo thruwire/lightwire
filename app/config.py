@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # Connector and provider credentials stay in env so the checked-in workspace can remain reusable.
     anthropic_api_key: str = ""
     slack_bot_token: str = ""
+    slack_app_token: str = ""
     telegram_bot_token: str = ""
     sqlite_path: str = "./data/thruflow.db"
     workspace_path: str = "./workspace"

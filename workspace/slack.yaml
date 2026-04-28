@@ -1,6 +1,16 @@
 enabled: true
-poll_interval_seconds: 10
+mode: socket
+
+socket:
+  reconnect: true
+  ack_timeout_seconds: 3
+
+polling:
+  enabled: false
+  poll_interval_seconds: 30
+
 channels:
   - channel_id: "C123456"
     include_threads: true
 ignore_bot_messages: true
+send_replies: true

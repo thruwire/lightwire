@@ -181,10 +181,40 @@ This split keeps the application image reusable while letting the deployment rep
 
 ## Slack Setup
 
-- Create a Slack app with `conversations.history` and `conversations.replies` scopes.
-- Install the app and place the bot token in `SLACK_BOT_TOKEN`.
-- Update `workspace/slack.yaml` with the channel IDs to poll.
-- ThruFlow tracks per-channel and per-thread cursors in SQLite and routes new Slack messages through the same dispatcher as API and heartbeat messages.
+## Slack Socket Mode
+
+ThruFlow uses Slack Socket Mode by default.
+
+This lets ThruFlow receive Slack events over a WebSocket connection without exposing a public webhook endpoint.
+
+Required tokens:
+
+- `SLACK_BOT_TOKEN`
+- `SLACK_APP_TOKEN`
+
+Slack app setup:
+
+1. Create a Slack app.
+2. Enable Socket Mode.
+3. Create an app-level token with `connections:write`.
+4. Add bot token scopes:
+   - `channels:history`
+   - `channels:read`
+   - `chat:write`
+   - `groups:history` if private channels are used
+   - `groups:read` if private channels are used
+5. Subscribe to bot events:
+   - `message.channels`
+   - optionally `message.groups`
+   - optionally `message.im`
+   - optionally `message.mpim`
+6. Install the app to the workspace.
+7. Add the tokens to `.env`.
+8. Configure `workspace/slack.yaml`.
+
+In Socket Mode, ThruFlow acknowledges Slack envelopes quickly, normalizes supported message events, and routes them through the same dispatcher used by API, Telegram, heartbeats, and agent outputs.
+
+Polling remains available as fallback or backfill only and is not recommended as the primary real-time ingestion path.
 
 ## Telegram Setup
 

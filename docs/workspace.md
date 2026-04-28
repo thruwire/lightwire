@@ -128,6 +128,7 @@ Optional `require_artifacts` can block downstream routing when an agent fails to
 ## Connector Config
 
 - `workspace/slack.yaml` controls Slack polling
+- `workspace/slack.yaml` controls Slack Socket Mode by default, with polling fallback available
 - `workspace/telegram.yaml` controls Telegram polling and allowed chat IDs
 
 Both connectors are optional. Missing `telegram.yaml` loads as disabled.
