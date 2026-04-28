@@ -1,4 +1,5 @@
 from app.config import Settings, load_runtime_config
+from pathlib import Path
 
 
 def test_load_runtime_config() -> None:
@@ -16,3 +17,10 @@ def test_load_runtime_config() -> None:
     assert "prompt_templates/api_to_research.md" in config.prompt_templates
     assert config.telegram.enabled is True
     assert config.telegram.allowed_chats[0].chat_id == "123456789"
+
+
+def test_readme_explains_control_plane_data_plane_and_no_json() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "control plane" in readme.lower()
+    assert "data plane" in readme.lower()
+    assert "Agents do not need to return JSON." in readme

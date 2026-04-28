@@ -44,6 +44,7 @@ class Router:
             prompt=self._render_template(heartbeat.target.prompt_template, message),
             parent_message=message,
             reply=None,
+            require_artifacts=False,
         )
 
     def resolve(self, message: NormalizedMessage) -> list[RouteDispatch]:
@@ -58,6 +59,7 @@ class Router:
                     prompt=self._render_template(route.target.prompt_template, message),
                     parent_message=message,
                     reply=route.reply,
+                    require_artifacts=route.require_artifacts,
                 )
             )
         if message.source.value == "heartbeat":

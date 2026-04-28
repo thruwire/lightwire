@@ -8,6 +8,23 @@ ThruFlow is a lightweight orchestrator for agent harnesses. Today it targets Cla
 - shared provider-managed memory
 - connector cursors and scheduler state
 
+## Control Plane Vs Data Plane
+
+ThruFlow uses messages and routes as the control plane.
+
+- connectors, API calls, heartbeats, and agent completions emit normalized messages
+- routes decide which agent session to run next
+- the dispatcher persists and forwards those control-plane events
+
+Shared memory is the data plane.
+
+- agents write durable artifacts and handoffs under `/mnt/memory`
+- agents mention the written `/mnt/memory/...` paths in their final response
+- ThruFlow extracts those paths and forwards them downstream
+- downstream agents read the referenced files from shared memory themselves
+
+The orchestrator does not need to read full artifact contents in v1.
+
 ## Runtime Flow
 
 At runtime, every inbound event becomes a `NormalizedMessage`:
@@ -29,9 +46,15 @@ That message then moves through the same path:
    - the rendered route prompt
    - shared memory attached
    - configured built-in and MCP tools
-5. Persist the session and agent output.
-6. Convert the output back into a normalized `agent_output` message.
-7. Feed that message back into the dispatcher so downstream routes can run.
+5. Persist the session and raw agent output.
+6. Extract `/mnt/memory/...` paths from the final response.
+7. Convert the output back into a normalized `agent_output` message that includes:
+   - `content`
+   - `summary`
+   - `artifacts`
+   - `handoffs`
+   - `memory_paths`
+8. Feed that message back into the dispatcher so downstream routes can run.
 
 This recursive output-to-message loop gives ThruFlow simple DAG chaining without introducing a separate graph engine.
 
@@ -55,12 +78,12 @@ The main tables are:
 
 - `messages`: normalized inbound and internal events
 - `sessions`: managed-agent session records
-- `agent_outputs`: stored agent completion content
+- `agent_outputs`: stored agent completion content, summary, and extracted memory paths
 - `heartbeats`: next and last run state
 - `connector_cursors`: Slack and Telegram polling cursors
 - `provider_state`: service-managed provider IDs such as environment, memory store, and vaults
 
-Shared artifacts and handoffs are expected to live in the provider-managed memory store mounted into sessions under `/mnt/memory`.
+Shared artifacts and handoffs live in the provider-managed memory store mounted into sessions under `/mnt/memory`.
 
 ## Extension Model
 

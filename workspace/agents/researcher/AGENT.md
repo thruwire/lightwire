@@ -12,3 +12,16 @@ Write handoffs under:
 
 Do not rely on ephemeral local files for cross-session persistence.
 Keep handoff files structured and concise.
+
+## Shared Memory Output Convention
+
+Use /mnt/memory as the durable shared workspace.
+
+When you produce durable work:
+- Write the full artifact to an appropriate path under /mnt/memory/artifacts.
+- Write compact handoff notes, when useful, under /mnt/memory/handoffs.
+- In your final response, mention every /mnt/memory path you wrote.
+
+ThruFlow uses the paths in your final response to pass work to downstream agents.
+
+You may respond in natural language. You do not need to return JSON.

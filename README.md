@@ -9,6 +9,7 @@ Unlike local multi-agent setups that require your own hardware, ThruFlow relies 
 - [Docs Index](./docs/README.md)
 - [Architecture](./docs/architecture.md)
 - [Workspace](./docs/workspace.md)
+- [Config Formats](./docs/config-formats.md)
 - [Connectors](./docs/connectors.md)
 - [Provider Integration](./docs/provider-integration.md)
 - [Operations](./docs/operations.md)
@@ -50,6 +51,14 @@ Memory is provider-managed, mounted into sessions at runtime, and not stored in 
 
 For a deeper breakdown of workspace files and responsibilities, see [docs/workspace.md](./docs/workspace.md).
 
+## Control Plane Vs Data Plane
+
+ThruFlow uses messages and routes as the control plane.
+
+Shared memory is the data plane. Agents write durable outputs to `/mnt/memory` and mention the paths in their final response. ThruFlow extracts those paths and passes them to downstream agents.
+
+The orchestrator does not need to parse artifact contents in v1. Downstream agents read memory artifacts themselves.
+
 ## Tools And MCP
 
 ThruFlow keeps environments internal and places tool configuration at the workspace level.
@@ -77,9 +86,19 @@ On deploy or startup, ThruFlow reads the workspace, checks the state database fo
 - Routes reference prompt template files instead of embedding large prompts inline.
 - Sessions attach the service-managed shared memory store with `read_write` access unless an agent overrides access mode.
 - Agent outputs become new normalized messages, which lets route chaining implement the Researcher → Analyst → Brief Writer pipeline.
+- Agent final outputs can be natural language; ThruFlow extracts `/mnt/memory/...` paths from them automatically.
 
 The full runtime walk-through is in [docs/architecture.md](./docs/architecture.md).
 - Routes can optionally mark a terminal output for Telegram reply delivery when the originating correlation came from Telegram.
+
+## Artifact Handoff Convention
+
+Agents should:
+1. Write full outputs to `/mnt/memory/artifacts`.
+2. Write compact handoff notes to `/mnt/memory/handoffs` when useful.
+3. Mention written `/mnt/memory` paths in their final response.
+
+Agents do not need to return JSON.
 
 ## Local Setup
 
@@ -105,6 +124,61 @@ The compose file mounts `./workspace` into `/app/workspace` as read-only and per
 
 Operational details and troubleshooting live in [docs/operations.md](./docs/operations.md).
 
+## Docker Image
+
+ThruFlow publishes a reusable container image to GitHub Container Registry.
+
+- Image name: `ghcr.io/<repo-owner>/thruflow`
+- The image namespace is based on the GitHub repository owner, so the same workflow works for both org-owned and user-owned repositories.
+- The publish workflow is in [.github/workflows/docker-publish.yml](./.github/workflows/docker-publish.yml).
+
+Example image reference:
+
+```text
+ghcr.io/YOUR_ORG_OR_USER/thruflow:latest
+```
+
+For reproducible deployments, prefer a commit-specific tag:
+
+```text
+ghcr.io/YOUR_ORG_OR_USER/thruflow:sha-<commit-sha>
+```
+
+The workflow publishes:
+
+- `latest` on the default branch
+- `sha-<commit-sha>` on every publish
+- `vX.Y.Z` when pushing a matching git tag
+
+By default, GHCR packages may be private. To let other repos pull the image easily, either make the package public in the GitHub Packages UI or authenticate when pulling the image.
+
+## Deployment Repo Usage
+
+The public ThruFlow repo can publish the base image, while a separate private deployment repo provides the workspace files and secrets.
+
+That deploy repo can pull the published image instead of rebuilding it:
+
+```yaml
+services:
+  thruflow:
+    image: ghcr.io/YOUR_ORG_OR_USER/thruflow:latest
+    env_file:
+      - .env
+    volumes:
+      - ./workspace:/app/workspace:ro
+      - thruflow-data:/app/data
+    ports:
+      - "8000:8000"
+    environment:
+      WORKSPACE_PATH: /app/workspace
+      SQLITE_PATH: /app/data/thruflow.db
+
+volumes:
+  thruflow-data:
+```
+
+This split keeps the application image reusable while letting the deployment repo own environment-specific workspace config and secrets.
+
 ## Slack Setup
 
 - Create a Slack app with `conversations.history` and `conversations.replies` scopes.
@@ -124,7 +198,7 @@ Connector behavior and extension guidance are documented in [docs/connectors.md]
 
 ## GitHub Actions Deployment
 
-`.github/workflows/deploy-managed-agents.yml` installs the project and runs `python scripts/deploy_managed_agents.py` on pushes to `main` or manual dispatch. The deploy script reads `workspace/agents/*`, uses each `AGENT.md` as the stable instruction source, ensures the service-managed Claude environment and shared memory store exist in the state DB, ensures Anthropic vaults exist for authenticated MCP servers, and then deploys or updates provider-backed agents from workspace config.
+The repository includes an example workflow at [.github/workflow-examples/deploy-managed-agents.yml.example](./.github/workflow-examples/deploy-managed-agents.yml.example). It shows how to run `python scripts/deploy_managed_agents.py` from GitHub Actions after checking out the repo and setting `ANTHROPIC_API_KEY`.
 
 ## Demo Walkthrough
 
@@ -144,9 +218,10 @@ curl -X POST http://localhost:8000/events \
 
 The demo workspace runs this chain:
 
-1. Researcher writes structured findings.
-2. Analyst evaluates tradeoffs and risks.
-3. Brief Writer produces a concise executive brief.
+1. Researcher writes a research artifact under `/mnt/memory/artifacts/research/...` and mentions the path in the final response.
+2. ThruFlow extracts the mentioned memory paths and emits them in the `agent_output` payload.
+3. Analyst receives artifact and handoff paths, reads the files from shared memory, and writes an analysis artifact.
+4. Brief Writer receives analysis artifact paths, reads from shared memory, and writes the final brief.
 
 You can also run:
 

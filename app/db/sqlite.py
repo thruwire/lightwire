@@ -27,6 +27,16 @@ def _from_json(value: str | None) -> dict[str, Any]:
     return json.loads(value)
 
 
+def _to_json_list(value: list[str]) -> str:
+    return json.dumps(value)
+
+
+def _from_json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return json.loads(value)
+
+
 class SqliteDatabase(Database):
     def __init__(self, path: str) -> None:
         self.path = Path(path)
@@ -42,6 +52,12 @@ class SqliteDatabase(Database):
             if self._has_legacy_column(conn, "sessions", "agent_key"):
                 conn.execute("DROP TABLE IF EXISTS sessions")
             if self._has_legacy_column(conn, "agent_outputs", "agent_key"):
+                conn.execute("DROP TABLE IF EXISTS agent_outputs")
+            if not self._table_has_columns(
+                conn,
+                "agent_outputs",
+                {"summary", "artifacts_json", "handoffs_json", "memory_paths_json"},
+            ):
                 conn.execute("DROP TABLE IF EXISTS agent_outputs")
             # Schema creation lives in one place so SQLite can be swapped later behind the repository interfaces.
             conn.executescript(
@@ -84,6 +100,10 @@ class SqliteDatabase(Database):
                     agent_id TEXT NOT NULL,
                     correlation_id TEXT NOT NULL,
                     content TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    artifacts_json TEXT NOT NULL,
+                    handoffs_json TEXT NOT NULL,
+                    memory_paths_json TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
@@ -112,6 +132,13 @@ class SqliteDatabase(Database):
     def _has_legacy_column(self, conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
         rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
         return any(row["name"] == column_name for row in rows)
+
+    def _table_has_columns(self, conn: sqlite3.Connection, table_name: str, columns: set[str]) -> bool:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        if not rows:
+            return True
+        existing = {row["name"] for row in rows}
+        return columns.issubset(existing)
 
     def execute(self, query: str, params: Sequence[Any] = ()) -> None:
         with self._connect() as conn:
@@ -259,8 +286,9 @@ class SqliteAgentOutputRepository(AgentOutputRepository):
         self.db.execute(
             """
             INSERT INTO agent_outputs (
-                id, session_id, agent_id, correlation_id, content, metadata, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                id, session_id, agent_id, correlation_id, content, summary,
+                artifacts_json, handoffs_json, memory_paths_json, metadata, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 output.id,
@@ -268,6 +296,10 @@ class SqliteAgentOutputRepository(AgentOutputRepository):
                 output.agent_id,
                 output.correlation_id,
                 output.content,
+                output.summary,
+                _to_json_list(output.artifacts),
+                _to_json_list(output.handoffs),
+                _to_json_list(output.memory_paths),
                 _to_json(output.metadata),
                 output.created_at.isoformat(),
             ),
@@ -275,7 +307,19 @@ class SqliteAgentOutputRepository(AgentOutputRepository):
 
     def get_by_session(self, session_id: str) -> AgentOutputRecord | None:
         row = self.db.fetchone("SELECT * FROM agent_outputs WHERE session_id = ?", (session_id,))
-        return AgentOutputRecord.model_validate({**row, "metadata": _from_json(row["metadata"])}) if row else None
+        return (
+            AgentOutputRecord.model_validate(
+                {
+                    **row,
+                    "artifacts": _from_json_list(row["artifacts_json"]),
+                    "handoffs": _from_json_list(row["handoffs_json"]),
+                    "memory_paths": _from_json_list(row["memory_paths_json"]),
+                    "metadata": _from_json(row["metadata"]),
+                }
+            )
+            if row
+            else None
+        )
 
 
 class SqliteConnectorCursorRepository(ConnectorCursorRepository):

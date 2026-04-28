@@ -36,6 +36,8 @@ For each route dispatch, ThruFlow builds a provider session request from:
 
 The provider request also includes route and correlation metadata so provider-side activity can be tied back to local orchestration state.
 
+Agents are allowed to respond in natural language. ThruFlow does not require a strict JSON completion contract. The only shared convention is that agents should mention every written `/mnt/memory/...` path in their final response so the orchestrator can extract and forward those paths.
+
 ## Tools And MCP
 
 The repo keeps tool configuration provider-neutral until the adapter compiles it.

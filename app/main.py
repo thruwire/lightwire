@@ -75,12 +75,13 @@ def build_state(settings: Settings | None = None) -> AppState:
     claude = ClaudeManagedAgentClient(config)
     resources = ClaudeProviderResourceService(config, provider_state, claude)
     session_service = ClaudeSessionService(claude)
+    output_handler = OutputHandler()
     dispatcher = Dispatcher(
         messages=messages,
         sessions=sessions,
         router=router,
-        runner=SessionRunner(config, resources, session_service, sessions, outputs),
-        output_handler=OutputHandler(),
+        runner=SessionRunner(config, resources, session_service, sessions, outputs, output_handler),
+        output_handler=output_handler,
     )
     telegram_connector = TelegramConnector(config, cursors, dispatcher.dispatch)
     # The dispatcher owns reply logic, so it needs a handle back to the Telegram connector after construction.

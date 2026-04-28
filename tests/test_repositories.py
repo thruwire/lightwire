@@ -65,11 +65,19 @@ def test_repository_crud(tmp_path: Path) -> None:
         agent_id="researcher",
         correlation_id=message.correlation_id,
         content="done",
+        summary="done",
+        artifacts=["/mnt/memory/artifacts/research/corr_1.md"],
+        handoffs=["/mnt/memory/handoffs/corr_1.md"],
+        memory_paths=[
+            "/mnt/memory/artifacts/research/corr_1.md",
+            "/mnt/memory/handoffs/corr_1.md",
+        ],
         metadata={"k": "v"},
         created_at=utc_now(),
     )
     outputs.create(output)
     assert outputs.get_by_session(session.id).content == "done"
+    assert outputs.get_by_session(session.id).artifacts == ["/mnt/memory/artifacts/research/corr_1.md"]
 
     cursor = ConnectorCursorRecord(connector="telegram", scope="global", cursor="123.4", updated_at=utc_now())
     cursors.upsert(cursor)

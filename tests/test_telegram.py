@@ -171,4 +171,4 @@ def test_final_output_reply_flow_uses_telegram_connector(tmp_path) -> None:
     assert len(sent_messages) == 1
     assert sent_messages[0]["chat_id"] == "123456789"
     assert sent_messages[0]["reply_to_message_id"] == 99
-    assert "Executive brief drafted." in str(sent_messages[0]["text"])
+    assert "/mnt/memory/artifacts/briefs/" in str(sent_messages[0]["text"])

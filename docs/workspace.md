@@ -74,6 +74,13 @@ Templates are rendered with Jinja-style variables. Supported context includes:
 
 If a route references a missing template file, ThruFlow raises a clear `FileNotFoundError`.
 
+The normal handoff convention is:
+
+- upstream agents write durable files under `/mnt/memory`
+- upstream agents mention those `/mnt/memory/...` paths in their final response
+- ThruFlow extracts the paths and places them in `payload.artifacts`, `payload.handoffs`, and `payload.memory_paths`
+- downstream templates primarily read from `payload.artifacts` and `payload.handoffs`
+
 ## Tools
 
 `workspace/tools.yaml` is the shared tool registry.
@@ -97,6 +104,7 @@ Each route defines:
 - `match`
 - `target`
 - optional `reply`
+- optional `require_artifacts`
 
 `match` currently supports:
 
@@ -111,6 +119,8 @@ Each route defines:
 
 Optional `reply` is currently used for final Telegram replies.
 
+Optional `require_artifacts` can block downstream routing when an agent fails to mention any artifact paths in its final response.
+
 ## Heartbeats
 
 `workspace/heartbeats.yaml` defines scheduled prompts that emit normalized heartbeat messages and then dispatch them through the normal routing path.
@@ -121,3 +131,5 @@ Optional `reply` is currently used for final Telegram replies.
 - `workspace/telegram.yaml` controls Telegram polling and allowed chat IDs
 
 Both connectors are optional. Missing `telegram.yaml` loads as disabled.
+
+For a field-by-field reference for every workspace YAML file, see [config-formats.md](./config-formats.md).

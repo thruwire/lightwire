@@ -4,6 +4,7 @@ This directory expands the high-level README into focused documents for contribu
 
 - [Architecture](./architecture.md): runtime components, message flow, and orchestration model
 - [Workspace](./workspace.md): workspace layout, agents, skills, templates, tools, and routes
+- [Config Formats](./config-formats.md): field-by-field YAML and env var reference
 - [Connectors](./connectors.md): Slack and Telegram polling behavior, normalization, and reply flow
 - [Provider Integration](./provider-integration.md): Claude Managed Agent deployment, sessions, memory, and MCP auth
 - [Operations](./operations.md): local setup, Docker, startup behavior, state persistence, and troubleshooting

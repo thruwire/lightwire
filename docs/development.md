@@ -7,6 +7,7 @@ The repo includes pytest coverage for:
 - workspace config loading
 - route matching
 - prompt rendering
+- memory path extraction and classification
 - dispatcher chaining
 - heartbeat scheduling
 - Slack polling and cursor logic
@@ -38,6 +39,8 @@ To add a route:
 2. add a route entry to `workspace/routes.yaml`
 3. point it at an existing agent
 4. reload config or restart the service
+
+If the route should fail closed when an agent forgets to mention durable outputs, set `require_artifacts: true`.
 
 ## Adding Agents
 

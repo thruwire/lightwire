@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import RuntimeConfig
+from app.memory.path_extractor import extract_memory_paths
 from app.models import AgentConfig, ClaudeSessionRequest, ClaudeSessionResult, MCPServerAuthType, SessionStatus
 from app.utils.ids import new_id
 
@@ -193,30 +194,33 @@ class ClaudeManagedAgentClient:
 
     def _mock_response(self, request: ClaudeSessionRequest) -> str:
         text = request.task_prompt
+        mentioned_paths = extract_memory_paths(text)
+        artifact_candidates = [path for path in mentioned_paths if "/artifacts/" in path]
+        handoff_candidates = [path for path in mentioned_paths if "/handoffs/" in path]
+        artifact_path = artifact_candidates[-1] if artifact_candidates else request.memory_store_id
+        handoff_path = handoff_candidates[-1] if handoff_candidates else None
         if request.agent_id == "researcher":
-            return (
-                "Research artifact drafted.\n"
-                f"- topic: {text[:120]}\n"
-                "- benefits: simple shared handoff surface, durable state, replayable work\n"
-                "- downsides: stale context, schema drift, file contention, access control concerns\n"
-                f"- memory_store_id: {request.memory_store_id}"
+            response = (
+                "Research complete. I reviewed the topic, noted the main benefits and risks, "
+                f"and wrote the research artifact to {artifact_path}."
             )
+            if handoff_path:
+                response += f" I also wrote a concise handoff note to {handoff_path}."
+            return response
         if request.agent_id == "analyst":
-            return (
-                "Analysis artifact drafted.\n"
-                "- key claims: shared memory handoffs improve decoupling and auditability\n"
-                "- uncertainty: data freshness and ownership conventions\n"
-                "- risks: coordination conflicts, overgrown shared state, weak validation\n"
-                "- implications: use narrow schemas and explicit artifact boundaries"
+            response = (
+                "Analysis complete. I evaluated the tradeoffs, uncertainty, and operational risks, "
+                f"and wrote the analysis artifact to {artifact_path}."
             )
+            if handoff_path:
+                response += f" I also wrote a handoff note to {handoff_path}."
+            return response
         if request.agent_id == "brief_writer":
-            return (
-                "Executive brief drafted.\n"
-                "Title: Shared Memory Stores for Agent Handoffs\n"
-                "- Shared memory simplifies asynchronous routing.\n"
-                "- The main risks are stale data and unclear ownership.\n"
-                "- Constrain formats and lifecycle to keep the system reliable.\n"
-                "Recommendation: adopt shared memory with conventions and validation.\n"
-                "Open questions: retention, permissions, conflict handling."
+            response = (
+                "Executive brief complete. I wrote the final brief to "
+                f"{artifact_path} with the main recommendation and open questions."
             )
-        return f"Completed task with shared memory store {request.memory_store_id}."
+            if handoff_path:
+                response += f" I also wrote a handoff note to {handoff_path}."
+            return response
+        return f"Completed the task and wrote durable output to {artifact_path}."
