@@ -53,13 +53,13 @@ For each route dispatch, ThruFlow builds a provider session request from:
 - agent instructions from `AGENT.md`
 - enabled `SKILL.md` instructions
 - rendered route prompt template
-- shared memory store attachment
+- any provider-side resources required by the adapter
 - agent-specific tool activation
 - MCP vault attachments when required
 
 The provider request also includes route and correlation metadata so provider-side activity can be tied back to local orchestration state.
 
-Agents are allowed to respond in natural language. ThruFlow does not require a strict JSON completion contract. The only shared convention is that agents should mention every written `/mnt/memory/...` path in their final response so the orchestrator can extract and forward those paths.
+Agents are allowed to respond in natural language. ThruFlow does not require a strict JSON completion contract. The orchestrator captures that output directly and forwards it as routed output data.
 
 ## Tools And MCP
 

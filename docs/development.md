@@ -7,7 +7,7 @@ The repo includes pytest coverage for:
 - workspace config loading
 - route matching
 - prompt rendering
-- memory path extraction and classification
+- direct routed output handling
 - dispatcher chaining
 - heartbeat scheduling
 - Slack polling and cursor logic
@@ -41,7 +41,7 @@ To add a route:
 3. point it at an existing agent
 4. reload config or restart the service
 
-If the route should fail closed when an agent forgets to mention durable outputs, set `require_artifacts: true`.
+Prefer direct routed outputs for normal chaining. `require_artifacts` remains only for backward compatibility.
 
 ## Adding Agents
 
@@ -50,7 +50,7 @@ To add an agent:
 1. create `workspace/agents/<agent_id>/config.yaml`
 2. create `workspace/agents/<agent_id>/AGENT.md`
 3. optionally attach skills and tools
-4. if the agent is expected to create `/mnt/memory` artifacts, activate `write` and usually `read`
+4. if the agent needs external tools, activate only the smallest toolset it actually needs
 5. run `python scripts/deploy_managed_agents.py`
 
 The deploy script is only a wrapper. The real deployment path lives in `app/deploy/service.py`, which is the right place for future provider-agnostic deployment orchestration.

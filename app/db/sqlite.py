@@ -53,11 +53,9 @@ class SqliteDatabase(Database):
                 conn.execute("DROP TABLE IF EXISTS sessions")
             if self._has_legacy_column(conn, "agent_outputs", "agent_key"):
                 conn.execute("DROP TABLE IF EXISTS agent_outputs")
-            if not self._table_has_columns(
-                conn,
-                "agent_outputs",
-                {"summary", "artifacts_json", "handoffs_json", "memory_paths_json"},
-            ):
+            if self._has_legacy_column(conn, "agent_outputs", "artifacts_json"):
+                conn.execute("DROP TABLE IF EXISTS agent_outputs")
+            if not self._table_has_columns(conn, "agent_outputs", {"summary"}):
                 conn.execute("DROP TABLE IF EXISTS agent_outputs")
             # Schema creation lives in one place so SQLite can be swapped later behind the repository interfaces.
             conn.executescript(
@@ -101,9 +99,6 @@ class SqliteDatabase(Database):
                     correlation_id TEXT NOT NULL,
                     content TEXT NOT NULL,
                     summary TEXT NOT NULL,
-                    artifacts_json TEXT NOT NULL,
-                    handoffs_json TEXT NOT NULL,
-                    memory_paths_json TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
@@ -287,8 +282,8 @@ class SqliteAgentOutputRepository(AgentOutputRepository):
             """
             INSERT INTO agent_outputs (
                 id, session_id, agent_id, correlation_id, content, summary,
-                artifacts_json, handoffs_json, memory_paths_json, metadata, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                metadata, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 output.id,
@@ -297,9 +292,6 @@ class SqliteAgentOutputRepository(AgentOutputRepository):
                 output.correlation_id,
                 output.content,
                 output.summary,
-                _to_json_list(output.artifacts),
-                _to_json_list(output.handoffs),
-                _to_json_list(output.memory_paths),
                 _to_json(output.metadata),
                 output.created_at.isoformat(),
             ),
@@ -311,9 +303,6 @@ class SqliteAgentOutputRepository(AgentOutputRepository):
             AgentOutputRecord.model_validate(
                 {
                     **row,
-                    "artifacts": _from_json_list(row["artifacts_json"]),
-                    "handoffs": _from_json_list(row["handoffs_json"]),
-                    "memory_paths": _from_json_list(row["memory_paths_json"]),
                     "metadata": _from_json(row["metadata"]),
                 }
             )

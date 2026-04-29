@@ -1,5 +1,5 @@
-Check /mnt/memory/handoffs for open research requests.
+Review the most recent routed workflow context available to you.
 
-If any are ready, summarize the next one and proceed.
+If there is an open research request, summarize it and proceed with the next useful research step.
 
-Write any resulting research artifact under /mnt/memory/artifacts/research and mention every /mnt/memory path you wrote in your final response.
+Return a concise research update that can be routed directly into a downstream agent.

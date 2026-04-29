@@ -11,7 +11,4 @@ memory:
 skills:
   - structured_notes
 
-tools:
-  built_in:
-    - read
     - write

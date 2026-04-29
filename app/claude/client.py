@@ -7,7 +7,6 @@ import shutil
 from typing import Any
 
 from app.config import RuntimeConfig
-from app.memory.path_extractor import extract_memory_paths
 from app.models import AgentConfig, ClaudeSessionRequest, ClaudeSessionResult, MCPServerAuthType, SessionStatus
 from app.utils.ids import new_id
 
@@ -640,33 +639,24 @@ class ClaudeManagedAgentClient:
 
     def _mock_response(self, request: ClaudeSessionRequest) -> str:
         text = request.task_prompt
-        mentioned_paths = extract_memory_paths(text)
-        artifact_candidates = [path for path in mentioned_paths if "/artifacts/" in path]
-        handoff_candidates = [path for path in mentioned_paths if "/handoffs/" in path]
-        artifact_path = artifact_candidates[-1] if artifact_candidates else request.memory_store_id
-        handoff_path = handoff_candidates[-1] if handoff_candidates else None
-        if "research" in text.lower() and "analysis" not in text.lower():
-            response = (
-                "Research complete. I reviewed the topic, noted the main benefits and risks, "
-                f"and wrote the research artifact to {artifact_path}."
+        if "executive brief" in text.lower():
+            return (
+                "Executive brief complete.\n"
+                "- Main takeaway: the upstream analysis supports a clear recommendation.\n"
+                "- Recommendation: proceed with the highest-confidence option.\n"
+                "- Open questions: validate scope, timing, and risk tolerance."
             )
-            if handoff_path:
-                response += f" I also wrote a concise handoff note to {handoff_path}."
-            return response
-        if "/artifacts/analysis/" in text:
-            response = (
-                "Analysis complete. I evaluated the tradeoffs, uncertainty, and operational risks, "
-                f"and wrote the analysis artifact to {artifact_path}."
+        if "analyze the upstream outputs" in text.lower():
+            return (
+                "Analysis complete.\n"
+                "- Key claims are captured from the upstream research.\n"
+                "- Main risks: limited scope, unclear assumptions, and missing validation.\n"
+                "- Implication: proceed, but call out uncertainty explicitly."
             )
-            if handoff_path:
-                response += f" I also wrote a handoff note to {handoff_path}."
-            return response
-        if "/artifacts/briefs/" in text:
-            response = (
-                "Executive brief complete. I wrote the final brief to "
-                f"{artifact_path} with the main recommendation and open questions."
+        if "research this topic" in text.lower():
+            return (
+                "Research complete.\n"
+                "- I identified the main facts, supporting context, and open questions.\n"
+                "- The result is ready for downstream analysis."
             )
-            if handoff_path:
-                response += f" I also wrote a handoff note to {handoff_path}."
-            return response
-        return f"Completed the task and wrote durable output to {artifact_path}."
+        return "Completed the task and produced a routed output for the next step."

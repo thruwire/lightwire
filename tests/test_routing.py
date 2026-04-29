@@ -54,11 +54,13 @@ def test_agent_output_triggers_downstream_route() -> None:
         type=MessageType.AGENT_COMPLETED,
         payload={
             "content": "research",
-            "artifacts": ["/mnt/memory/artifacts/research/corr_1.md"],
-            "handoffs": ["/mnt/memory/handoffs/corr_1-research.md"],
-            "memory_paths": [
-                "/mnt/memory/artifacts/research/corr_1.md",
-                "/mnt/memory/handoffs/corr_1-research.md",
+            "upstream_outputs": [
+                {
+                    "source_agent_id": "researcher",
+                    "source_step_id": "sess_1",
+                    "content": "research",
+                    "metadata": {"route_id": "api_to_research"},
+                }
             ],
         },
         metadata={"agent_id": "researcher"},
@@ -68,18 +70,20 @@ def test_agent_output_triggers_downstream_route() -> None:
     assert dispatches[0].agent_id == "analyst"
 
 
-def test_downstream_template_receives_artifact_paths() -> None:
+def test_downstream_template_receives_upstream_outputs_text() -> None:
     config = load_runtime_config(Settings(sqlite_path=":memory:", workspace_path="workspace"))
     router = Router(config)
     message = build_message(
         source=MessageSource.AGENT_OUTPUT,
         type=MessageType.AGENT_COMPLETED,
         payload={
-            "artifacts": ["/mnt/memory/artifacts/research/corr_1.md"],
-            "handoffs": ["/mnt/memory/handoffs/corr_1-research.md"],
-            "memory_paths": [
-                "/mnt/memory/artifacts/research/corr_1.md",
-                "/mnt/memory/handoffs/corr_1-research.md",
+            "upstream_outputs": [
+                {
+                    "source_agent_id": "researcher",
+                    "source_step_id": "sess_1",
+                    "content": "Research complete.",
+                    "metadata": {"route_id": "api_to_research"},
+                }
             ],
             "content": "Research complete.",
             "summary": "Research complete.",
@@ -87,8 +91,8 @@ def test_downstream_template_receives_artifact_paths() -> None:
         metadata={"agent_id": "researcher"},
     )
     dispatch = router.resolve(message)[0]
-    assert "/mnt/memory/artifacts/research/corr_1.md" in dispatch.prompt
-    assert "/mnt/memory/handoffs/corr_1-research.md" in dispatch.prompt
+    assert '<upstream_output source_agent="researcher" source_step="sess_1">' in dispatch.prompt
+    assert "Research complete." in dispatch.prompt
 
 
 def test_missing_template_produces_clear_error(tmp_path: Path) -> None:
@@ -131,10 +135,8 @@ routes:
         router.resolve(build_message())
 
 
-def test_demo_templates_use_artifact_paths_not_payload_content() -> None:
+def test_demo_templates_use_upstream_outputs_text() -> None:
     research_to_analysis = Path("workspace/prompt_templates/research_to_analysis.md").read_text(encoding="utf-8")
     analysis_to_brief = Path("workspace/prompt_templates/analysis_to_brief.md").read_text(encoding="utf-8")
-    assert "{% for artifact in payload.artifacts %}" in research_to_analysis
-    assert "{{ payload.content }}" not in research_to_analysis
-    assert "{% for artifact in payload.artifacts %}" in analysis_to_brief
-    assert "{{ payload.content }}" not in analysis_to_brief
+    assert "{{ upstream_outputs_text }}" in research_to_analysis
+    assert "{{ upstream_outputs_text }}" in analysis_to_brief

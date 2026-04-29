@@ -72,9 +72,7 @@ That state includes:
 - provider resource IDs
 - heartbeat timing
 
-Shared durable task artifacts should live in the mounted provider memory store, not in the git repository.
-
-Agents can return natural language text. ThruFlow extracts `/mnt/memory/...` paths from that text and uses those paths as the normal downstream handoff input.
+Agents can return natural language text. ThruFlow captures that output and uses direct routed outputs as the normal downstream handoff input.
 
 ## Demo
 

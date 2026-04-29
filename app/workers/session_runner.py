@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import logging
-
 from app.claude.resources import ClaudeProviderResourceService
 from app.claude.sessions import ClaudeSessionService
 from app.config import RuntimeConfig
@@ -11,9 +9,6 @@ from app.repositories.sessions import SessionRepository
 from app.utils.ids import new_id
 from app.utils.time import utc_now
 from app.workers.output_handler import OutputHandler
-
-
-logger = logging.getLogger(__name__)
 
 
 class SessionRunner:
@@ -67,46 +62,6 @@ class SessionRunner:
         )
         result = await self.session_service.run(request)
         self.sessions.update_status(session.id, result.status, external_session_id=result.external_session_id)
-        extracted = self.output_handler.extract_paths(result.content)
-        written = self.output_handler.extract_written_paths(result.raw)
-        logger.info(
-            "Agent session completed route=%s agent=%s session_id=%s memory_store_id=%s mentioned_paths=%s written_paths=%s",
-            dispatch.route_id,
-            agent.agent_id,
-            result.external_session_id,
-            result.attached_memory_store_id,
-            extracted.memory_paths,
-            written.memory_paths,
-        )
-        output_valid = True
-        validation_error: str | None = None
-        if dispatch.require_artifacts and not extracted.artifacts:
-            logger.warning(
-                "Route %s required artifacts from agent %s but none were mentioned in the final output.",
-                dispatch.route_id,
-                agent.agent_id,
-            )
-            output_valid = False
-            validation_error = "required artifact paths were not mentioned in the final output"
-        elif dispatch.require_artifacts and written.artifacts and not set(extracted.artifacts).intersection(written.artifacts):
-            logger.warning(
-                "Route %s required artifacts from agent %s, but mentioned artifact paths %s did not match written artifact paths %s.",
-                dispatch.route_id,
-                agent.agent_id,
-                extracted.artifacts,
-                written.artifacts,
-            )
-            output_valid = False
-            validation_error = "mentioned artifact paths did not match the artifact paths written by the agent"
-        logger.info(
-            "Agent session output route=%s agent=%s output_valid=%s validation_error=%s artifacts=%s written_artifacts=%s",
-            dispatch.route_id,
-            agent.agent_id,
-            output_valid,
-            validation_error,
-            extracted.artifacts,
-            written.artifacts,
-        )
         output = AgentOutputRecord(
             id=new_id("out"),
             session_id=session.id,
@@ -114,18 +69,10 @@ class SessionRunner:
             correlation_id=dispatch.parent_message.correlation_id,
             content=result.content,
             summary=self.output_handler.build_summary(result.content),
-            artifacts=extracted.artifacts,
-            handoffs=extracted.handoffs,
-            memory_paths=extracted.memory_paths,
             metadata={
                 "memory_store_id": result.attached_memory_store_id,
-                "written_artifacts": written.artifacts,
-                "written_handoffs": written.handoffs,
-                "written_memory_paths": written.memory_paths,
                 # Route metadata is copied onto agent output so later handlers can make connector-aware decisions.
                 "route_id": dispatch.route_id,
-                "output_valid": output_valid,
-                **({"validation_error": validation_error} if validation_error else {}),
                 **({"reply": dispatch.reply.model_dump(mode="json")} if dispatch.reply else {}),
             },
             created_at=utc_now(),

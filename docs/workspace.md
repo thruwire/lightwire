@@ -76,16 +76,15 @@ Templates are rendered with Jinja-style variables. Supported context includes:
 - `metadata`
 - `correlation_id`
 - `parent_message_id`
-- `memory_mount_path`
+- `upstream_outputs_text`
 
 If a route references a missing template file, ThruFlow raises a clear `FileNotFoundError`.
 
 The normal handoff convention is:
 
-- upstream agents write durable files under `/mnt/memory`
-- upstream agents mention those `/mnt/memory/...` paths in their final response
-- ThruFlow extracts the paths and places them in `payload.artifacts`, `payload.handoffs`, and `payload.memory_paths`
-- downstream templates primarily read from `payload.artifacts` and `payload.handoffs`
+- upstream agents return the output content itself
+- ThruFlow captures that result as a routed output record
+- downstream templates primarily consume `upstream_outputs_text`
 
 ## Tools
 
@@ -99,12 +98,7 @@ It contains:
 
 Agent configs then activate the specific built-in tools and MCP servers they need. This keeps infrastructure config at the workspace level and permissions at the agent level.
 
-For the standard memory-artifact flow, agents that are expected to create handoff files should usually activate at least:
-
-- `read`
-- `write`
-
-`bash` is also commonly useful. Agents that do not need external research should generally not activate `web_search` or `web_fetch`.
+Agents that do not need external research should generally not activate `web_search` or `web_fetch`.
 
 ## Routes
 
@@ -117,7 +111,7 @@ Each route defines:
 - `match`
 - `target`
 - optional `reply`
-- optional `require_artifacts`
+- optional `require_artifacts` for backward compatibility only
 
 `match` currently supports:
 
@@ -132,7 +126,7 @@ Each route defines:
 
 Optional `reply` is currently used for final Telegram replies.
 
-Optional `require_artifacts` can block downstream routing when an agent fails to mention any artifact paths in its final response.
+`require_artifacts` remains in the schema for backward compatibility, but direct routed outputs are the normal handoff mechanism.
 
 ## Heartbeats
 

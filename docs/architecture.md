@@ -5,25 +5,17 @@ ThruFlow is a lightweight orchestrator for agent harnesses. Today it targets Cla
 - normalized messages
 - route matching
 - session execution
-- shared provider-managed memory
+- direct routed outputs
 - connector cursors and scheduler state
 
-## Control Plane Vs Data Plane
+## Direct Routing
 
-ThruFlow uses messages and routes as the control plane.
+ThruFlow uses normalized messages and routed outputs as the handoff mechanism.
 
 - connectors, API calls, heartbeats, and agent completions emit normalized messages
 - routes decide which agent session to run next
 - the dispatcher persists and forwards those control-plane events
-
-Shared memory is the data plane.
-
-- agents write durable artifacts and handoffs under `/mnt/memory`
-- agents mention the written `/mnt/memory/...` paths in their final response
-- ThruFlow extracts those paths and forwards them downstream
-- downstream agents read the referenced files from shared memory themselves
-
-The orchestrator does not need to read full artifact contents in v1.
+- agent outputs are captured as structured routed outputs and passed directly into downstream prompts
 
 ## Runtime Flow
 
@@ -44,17 +36,13 @@ That message then moves through the same path:
    - agent instructions from `AGENT.md`
    - enabled skill instructions from `SKILL.md`
    - the rendered route prompt
-   - shared memory attached
    - configured built-in and MCP tools
 5. Persist the session and raw agent output.
-6. Extract `/mnt/memory/...` paths from the final response.
-7. Convert the output back into a normalized `agent_output` message that includes:
+6. Convert the output back into a normalized `agent_output` message that includes:
    - `content`
    - `summary`
-   - `artifacts`
-   - `handoffs`
-   - `memory_paths`
-8. Feed that message back into the dispatcher so downstream routes can run.
+   - `upstream_outputs`
+7. Feed that message back into the dispatcher so downstream routes can run.
 
 This recursive output-to-message loop gives ThruFlow simple DAG chaining without introducing a separate graph engine.
 
@@ -78,12 +66,10 @@ The main tables are:
 
 - `messages`: normalized inbound and internal events
 - `sessions`: managed-agent session records
-- `agent_outputs`: stored agent completion content, summary, and extracted memory paths
+- `agent_outputs`: stored agent completion content and summary
 - `heartbeats`: next and last run state
 - `connector_cursors`: Slack and Telegram polling cursors
 - `provider_state`: service-managed provider IDs such as environment, memory store, and vaults
-
-Shared artifacts and handoffs live in the provider-managed memory store mounted into sessions under `/mnt/memory`.
 
 ## Extension Model
 

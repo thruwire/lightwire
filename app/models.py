@@ -244,11 +244,15 @@ class AgentOutputRecord(BaseModel):
     correlation_id: str
     content: str
     summary: str
-    artifacts: list[str] = Field(default_factory=list)
-    handoffs: list[str] = Field(default_factory=list)
-    memory_paths: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+
+class RoutedOutput(BaseModel):
+    source_agent_id: str
+    source_step_id: str | None = None
+    content: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class HeartbeatState(BaseModel):
@@ -281,12 +285,6 @@ class RouteDispatch(BaseModel):
     parent_message: NormalizedMessage
     reply: RouteReplyConfig | None = None
     require_artifacts: bool = False
-
-
-class ExtractedMemoryPaths(BaseModel):
-    artifacts: list[str] = Field(default_factory=list)
-    handoffs: list[str] = Field(default_factory=list)
-    memory_paths: list[str] = Field(default_factory=list)
 
 
 class AppEventIn(BaseModel):

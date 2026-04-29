@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.config import RuntimeConfig
-from app.models import HeartbeatConfig, NormalizedMessage, RouteDispatch
+from app.models import HeartbeatConfig, NormalizedMessage, RouteDispatch, RoutedOutput
 from app.routing.rules import route_matches
 from app.routing.templates import render_template
 
@@ -27,9 +27,28 @@ class Router:
                 "metadata": message.metadata,
                 "correlation_id": message.correlation_id,
                 "parent_message_id": message.parent_message_id,
-                "memory_mount_path": self.config.get_provider_memory_mount_path(),
+                "upstream_outputs_text": self._render_upstream_outputs(message),
             },
         )
+
+    def _render_upstream_outputs(self, message: NormalizedMessage) -> str:
+        values = message.payload.get("upstream_outputs", [])
+        if not isinstance(values, list):
+            return ""
+        outputs: list[str] = []
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            routed = RoutedOutput.model_validate(value)
+            attrs = [f'source_agent="{routed.source_agent_id}"']
+            if routed.source_step_id:
+                attrs.append(f'source_step="{routed.source_step_id}"')
+            outputs.append(
+                f"<upstream_output {' '.join(attrs)}>\n{routed.content}\n</upstream_output>"
+            )
+        if not outputs:
+            return ""
+        return "Upstream outputs:\n\n" + "\n\n".join(outputs)
 
     def _heartbeat_dispatch(self, message: NormalizedMessage) -> list[RouteDispatch]:
         heartbeat_id = message.metadata.get("heartbeat_id")

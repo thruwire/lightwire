@@ -13,8 +13,6 @@ skills:
 
 tools:
   built_in:
-    - read
-    - write
     - web_fetch
   mcp:
     external_research:

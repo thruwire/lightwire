@@ -47,17 +47,15 @@ workspace/
 - `workspace/slack.yaml` defines Slack Socket Mode behavior, channel allowlists, and explicit-address rules.
 - `workspace/telegram.yaml` defines Telegram polling, chat allowlists, and optional final replies.
 
-Memory is provider-managed, mounted into sessions at runtime, and not stored in git.
+Provider-managed memory may still be attached to sessions, but it is not used as the normal inter-agent routing contract.
 
 For a deeper breakdown of workspace files and responsibilities, see [docs/workspace.md](./docs/workspace.md).
 
-## Control Plane Vs Data Plane
+## Direct Routed Outputs
 
-ThruFlow uses messages and routes as the control plane.
+ThruFlow uses messages, routes, and captured agent outputs as the control-plane handoff mechanism.
 
-Shared memory is the data plane. Agents write durable outputs to `/mnt/memory` and mention the paths in their final response. ThruFlow extracts those paths and passes them to downstream agents.
-
-The orchestrator does not need to parse artifact contents in v1. Downstream agents read memory artifacts themselves.
+Agent A returns output content. ThruFlow captures that result, stores it in local orchestration state, and routes it directly to Agent B as structured upstream output input. Agents do not need to know provider filesystem paths for normal chaining.
 
 ## Tools And MCP
 
@@ -67,11 +65,10 @@ ThruFlow keeps environments internal and places tool configuration at the worksp
 - Agent configs activate only the built-in tools and MCP tools they need.
 - Claude Managed Agents requires MCP servers to be remote HTTP endpoints; local stdio MCP servers are not sufficient.
 
-For the normal shared-memory artifact pattern, writable file tools are not optional in practice.
+For direct routed-output workflows, writable filesystem tools are optional rather than required.
 
-- `read` lets downstream agents open specific artifact files.
-- `write` lets agents persist `/mnt/memory/artifacts/...` and `/mnt/memory/handoffs/...` outputs.
-- `bash` can still be useful for non-persistence shell tasks, but durable artifact and handoff files should be written with `write`, not shell redirection.
+- `web_search` and `web_fetch` are useful for research-oriented agents.
+- `read`, `write`, and `bash` remain available when a particular provider workflow genuinely needs them.
 - `web_search` and `web_fetch` should only be enabled on agents that actually need external research.
 
 For MCP auth, ThruFlow reads secret references from `workspace/tools.yaml`, creates or reuses Anthropic vaults and credentials, stores the resulting IDs in SQLite, and attaches the relevant `vault_ids` when sessions start. This keeps secrets out of reusable agent definitions while still supporting generic third-party MCP servers.
@@ -91,9 +88,8 @@ ThruFlow treats deployment as an explicit control-plane operation. The deploy/ap
 
 - Messages from API, Slack, Telegram, heartbeats, and agent outputs are normalized into one internal shape.
 - Routes reference prompt template files instead of embedding large prompts inline.
-- Sessions attach the service-managed shared memory store with `read_write` access unless an agent overrides access mode.
 - Agent outputs become new normalized messages, which lets route chaining implement the Researcher → Analyst → Brief Writer pipeline.
-- Agent final outputs can be natural language; ThruFlow extracts `/mnt/memory/...` paths from them automatically.
+- Agent final outputs can be natural language; ThruFlow captures and routes that output directly.
 
 The full runtime walk-through is in [docs/architecture.md](./docs/architecture.md).
 - Routes can optionally mark a terminal output for Telegram reply delivery when the originating correlation came from Telegram.
@@ -114,14 +110,11 @@ Slack request/response agents:
 - Slack is just another normalized message source, so the same route chain can start from `source=slack` and end with a reply action.
 - In practice this makes it straightforward to build a Slack-facing agent flow such as intake → research → response, where the user asks in Slack and gets the finished answer back in Slack, usually in the same thread.
 
-## Artifact Handoff Convention
+## Handoff Convention
 
-Agents should:
-1. Write full outputs to `/mnt/memory/artifacts`.
-2. Write compact handoff notes to `/mnt/memory/handoffs` when useful.
-3. Use the built-in `write` tool to persist those files at exact paths.
-4. Avoid reading directories like `/mnt/memory`; read specific files instead.
-5. Mention written `/mnt/memory` paths in their final response.
+Agents should return the actual output that downstream agents need.
+
+ThruFlow wraps that result into structured routed output records and includes them in the next step's prompt context.
 
 Agents do not need to return JSON.
 
@@ -300,10 +293,10 @@ curl -X POST http://localhost:8000/events \
 
 The demo workspace runs this chain:
 
-1. Researcher writes a research artifact under `/mnt/memory/artifacts/research/...` and mentions the path in the final response.
-2. ThruFlow extracts the mentioned memory paths and emits them in the `agent_output` payload.
-3. Analyst receives artifact and handoff paths, reads the files from shared memory, and writes an analysis artifact.
-4. Brief Writer receives analysis artifact paths, reads from shared memory, and writes the final brief.
+1. Researcher returns structured research output.
+2. ThruFlow captures that output as routed upstream data.
+3. Analyst receives the upstream research output directly in the next prompt and produces analysis.
+4. Brief Writer receives the upstream analysis directly and produces the final brief.
 
 You can also run:
 

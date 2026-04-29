@@ -21,10 +21,9 @@ def test_load_runtime_config() -> None:
     assert config.telegram.allowed_chats[0].chat_id == "123456789"
 
 
-def test_readme_explains_control_plane_data_plane_and_no_json() -> None:
+def test_readme_explains_direct_routing_and_no_json() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
-    assert "control plane" in readme.lower()
-    assert "data plane" in readme.lower()
+    assert "direct routed outputs" in readme.lower()
     assert "Agents do not need to return JSON." in readme
 
 

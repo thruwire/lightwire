@@ -42,17 +42,18 @@ class Dispatcher:
         for route in self.router.resolve(message):
             session, output = await self.runner.run_dispatch(route)
             created_sessions.append(session.id)
-            output_message = self.output_handler.to_message(output, parent_message_id=message.id)
+            upstream_outputs = self.output_handler.upstream_outputs_from_message(message)
+            upstream_outputs.append(self.output_handler.routed_output_from_record(output))
+            output_message = self.output_handler.to_message(
+                output,
+                parent_message_id=message.id,
+                upstream_outputs=upstream_outputs,
+            )
             self.sessions.update_status(session.id, session.status, output_message_id=output_message.id)
-            if not self._output_is_valid(output_message):
-                continue
             await self._handle_reply(output_message, message)
             # Agent output re-enters the same dispatcher path, which gives ThruFlow simple DAG chaining without a graph engine.
             await self.dispatch(output_message)
         return created_sessions
-
-    def _output_is_valid(self, output_message: NormalizedMessage) -> bool:
-        return bool(output_message.metadata.get("output_valid", True))
 
     async def _handle_reply(self, output_message: NormalizedMessage, parent_message: NormalizedMessage) -> None:
         reply = output_message.metadata.get("reply")
@@ -107,9 +108,9 @@ class Dispatcher:
         lines = text.splitlines()
         kept: list[str] = []
         for line in lines:
-            if "/mnt/memory/" in line:
-                continue
             if re.match(r"^\s*(:file_folder:|written to:|paths written:)\s*$", line.strip(), flags=re.IGNORECASE):
+                continue
+            if re.match(r"^\s*/\S+\s*$", line.strip()):
                 continue
             kept.append(line)
         cleaned = "\n".join(kept)

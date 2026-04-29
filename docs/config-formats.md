@@ -57,7 +57,7 @@ Built-in tool fields:
 - `enabled`: whether the tool is available in the registry
 - `permission_policy`: currently `always_allow` or `always_ask`
 
-Common built-in tools used by this repo's artifact-handoff pattern:
+Common built-in tools used by this repo's direct-routing pattern:
 
 - `read`
 - `write`
@@ -106,7 +106,7 @@ Route fields:
 - `match`
 - `target`
 - optional `reply`
-- optional `require_artifacts`
+- optional `require_artifacts` for backward compatibility
 
 `match` fields:
 
@@ -132,10 +132,7 @@ reply:
   mode: final_output
 ```
 
-`require_artifacts` behavior:
-
-- if `false` or omitted, path extraction still happens automatically, but missing artifacts do not block the chain
-- if `true`, missing extracted artifact paths mark the output invalid and stop downstream routing
+`require_artifacts` is retained for backward compatibility, but the normal routing path now uses direct routed outputs instead of memory-path extraction.
 
 ## `workspace/heartbeats.yaml`
 
@@ -281,21 +278,15 @@ Shape:
 agent_id: researcher
 enabled: true
 display_name: Researcher
-description: Researches a topic and writes structured findings.
+description: Researches a topic and returns structured findings.
 provider: claude_managed_agents
 model: claude-sonnet-4-6
-
-memory:
-  access: read_write
 
 skills:
   - structured_notes
 
 tools:
   built_in:
-    - bash
-    - read
-    - write
     - web_search
   mcp:
     external_research:
@@ -312,7 +303,6 @@ Fields:
 - `description`
 - `provider`
 - `model`
-- `memory.access`
 - `skills`
 - `tools.built_in`
 - `tools.mcp`
@@ -325,10 +315,9 @@ Purpose:
 Required convention:
 
 - describe the durable role of the agent
-- explain the shared memory output convention
-- tell the agent to use the built-in `write` tool for durable `/mnt/memory` outputs
-- tell the agent not to read directories like `/mnt/memory`
-- instruct the agent to mention every `/mnt/memory/...` path it writes
+- explain what output shape the next step needs
+- keep provider-specific filesystem details out of the prompt contract
+- allow natural language output unless a structured format is explicitly required
 - allow natural language output
 - do not require JSON output
 
@@ -374,10 +363,9 @@ Template context:
 - `metadata`
 - `correlation_id`
 - `parent_message_id`
-- `memory_mount_path`
+- `upstream_outputs_text`
 
 Current convention:
 
-- downstream prompts should primarily consume `payload.artifacts` and `payload.handoffs`
+- downstream prompts should primarily consume `upstream_outputs_text`
 - prompts can still mention `payload.content` or `payload.summary` for human context if needed
-- agents should mention every written `/mnt/memory/...` path in their final response
