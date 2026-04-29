@@ -96,44 +96,13 @@ class ClaudeManagedAgentClient:
                 raw={"mode": "mock", "vault_ids": request.vault_ids},
             )
 
-        await self._require_ant()
-        session_payload = {
-            "agent": request.agent_id,
-            "environment_id": self.config.get_provider_environment_id(),
-            "vault_ids": request.vault_ids,
-            "metadata": request.metadata | {"correlation_id": request.correlation_id, "agent_id": request.agent_id},
-            "resources": [
-                {
-                    "type": "memory_store",
-                    "memory_store_id": request.memory_store_id,
-                    "access": request.memory_access,
-                }
-            ],
-        }
-        session = await self._run_ant_json(["beta:sessions", "create", "--format", "json"], session_payload)
-        session_id = str(session["id"])
-        await self._run_ant_command(
-            [
-                "beta:sessions:events",
-                "send",
-                "--session-id",
-                session_id,
-                "--event",
-                json.dumps(
-                    {
-                        "type": "user.message",
-                        "content": [{"type": "text", "text": request.task_prompt}],
-                    }
-                ),
-            ]
-        )
-        content, status, events_payload = await self._wait_for_session_output(session_id)
+        session_id, content, status, raw = await asyncio.to_thread(self._run_sdk_session, request)
         return ClaudeSessionResult(
             external_session_id=session_id,
             status=status,
             content=content,
             attached_memory_store_id=request.memory_store_id,
-            raw={"session": session, "events": events_payload},
+            raw=raw,
         )
 
     async def create_environment(self, name: str) -> str:
@@ -294,6 +263,60 @@ class ClaudeManagedAgentClient:
             "tools": self._build_tools(agent),
         }
 
+    def _run_sdk_session(self, request: ClaudeSessionRequest) -> tuple[str, str, SessionStatus, dict[str, Any]]:
+        client = self._get_sdk_client()
+        session = client.beta.sessions.create(
+            agent=request.agent_id,
+            environment_id=self.config.get_provider_environment_id(),
+            title=f"ThruFlow {request.correlation_id}",
+            metadata=request.metadata | {"correlation_id": request.correlation_id, "agent_id": request.agent_id},
+            vault_ids=request.vault_ids,
+            resources=[
+                {
+                    "type": "memory_store",
+                    "memory_store_id": request.memory_store_id,
+                    "access": request.memory_access,
+                }
+            ],
+        )
+        session_id = str(session.id)
+        events_payload: list[dict[str, Any]] = []
+        texts: list[str] = []
+        final_status = SessionStatus.RUNNING
+
+        with client.beta.sessions.events.stream(session_id) as stream:
+            client.beta.sessions.events.send(
+                session_id,
+                events=[
+                    {
+                        "type": "user.message",
+                        "content": [{"type": "text", "text": request.task_prompt}],
+                    }
+                ],
+            )
+            for event in stream:
+                event_dict = self._sdk_to_plain_data(event)
+                events_payload.append(event_dict)
+                event_type = getattr(event, "type", None) or event_dict.get("type")
+                if event_type == "agent.message":
+                    for block in getattr(event, "content", []) or event_dict.get("content", []) or []:
+                        block_type = getattr(block, "type", None) if not isinstance(block, dict) else block.get("type")
+                        block_text = getattr(block, "text", None) if not isinstance(block, dict) else block.get("text")
+                        if block_type == "text" and block_text:
+                            texts.append(str(block_text))
+                elif event_type == "session.status_idle":
+                    final_status = SessionStatus.COMPLETED
+                    break
+                elif event_type == "session.error":
+                    raise RuntimeError(f"Managed-agent session '{session_id}' failed: {json.dumps(event_dict)}")
+
+        return (
+            session_id,
+            "\n".join(texts).strip(),
+            final_status,
+            {"session": self._sdk_to_plain_data(session), "events": events_payload},
+        )
+
     async def _wait_for_session_output(self, session_id: str, timeout_seconds: int = 120) -> tuple[str, SessionStatus, dict[str, Any]]:
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         last_events: dict[str, Any] = {}
@@ -308,6 +331,54 @@ class ClaudeManagedAgentClient:
                 return content, status, last_events
             await asyncio.sleep(1)
         raise RuntimeError(f"Timed out waiting for managed-agent session '{session_id}' to complete.")
+
+    def _get_sdk_client(self) -> Any:
+        try:
+            from anthropic import Anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "The anthropic Python SDK is required for managed-agent session execution. Install the `anthropic` package."
+            ) from exc
+        kwargs: dict[str, Any] = {"api_key": self.config.settings.anthropic_api_key}
+        # Managed-agent runtime should follow the Anthropic SDK quickstart by default.
+        # Only pass base_url when the operator explicitly points the client at a
+        # non-default endpoint.
+        if self.config.settings.anthropic_base_url.rstrip("/") != "https://api.anthropic.com/v1":
+            kwargs["base_url"] = self.config.settings.anthropic_base_url
+        return Anthropic(**kwargs)
+
+    def _sdk_to_plain_data(self, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, list):
+            return [self._sdk_to_plain_data(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): self._sdk_to_plain_data(item) for key, item in value.items()}
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            for kwargs in (
+                {"mode": "json", "warnings": False, "exclude_none": True},
+                {"mode": "python", "warnings": False, "exclude_none": True},
+                {},
+            ):
+                try:
+                    return self._sdk_to_plain_data(model_dump(**kwargs))
+                except TypeError:
+                    continue
+        for attr in ("to_dict", "dict"):
+            method = getattr(value, attr, None)
+            if callable(method):
+                try:
+                    return self._sdk_to_plain_data(method())
+                except TypeError:
+                    continue
+        if hasattr(value, "__dict__"):
+            return {
+                key: self._sdk_to_plain_data(item)
+                for key, item in vars(value).items()
+                if not key.startswith("_")
+            }
+        return str(value)
 
     def _extract_agent_message_text(self, events_payload: dict[str, Any]) -> str:
         texts: list[str] = []
