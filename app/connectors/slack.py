@@ -114,7 +114,20 @@ class SlackConnector:
     async def send_message(self, channel: str, text: str, thread_ts: str | None = None) -> None:
         self._ensure_bot_token()
         web_client = await self._get_web_client()
-        kwargs: dict[str, Any] = {"channel": channel, "text": text}
+        kwargs: dict[str, Any] = {
+            "channel": channel,
+            "text": self._slack_fallback_text(text),
+            "mrkdwn": True,
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": self._to_slack_mrkdwn(text),
+                    },
+                }
+            ],
+        }
         if thread_ts:
             kwargs["thread_ts"] = thread_ts
         try:
@@ -510,6 +523,8 @@ class SlackConnector:
         return {"text": cleaned_text, "mentioned_bot": mentioned_bot, "matched_prefix": matched_prefix}
 
     def _log_event_drop(self, reason: str, event: dict[str, Any], *, mode: str, event_id: str | None = None) -> None:
+        if reason in {"ignored_bot_or_missing_user", "ignored_self_message"}:
+            return
         logger.info(
             "Slack event dropped reason=%s mode=%s event_id=%s type=%s subtype=%s channel=%s channel_type=%s user=%s ts=%s text=%r",
             reason,
@@ -523,6 +538,23 @@ class SlackConnector:
             event.get("ts"),
             event.get("text", ""),
         )
+
+    def _to_slack_mrkdwn(self, text: str) -> str:
+        converted = text.replace("\r\n", "\n")
+        converted = re.sub(r"(?m)^---+$", "────────", converted)
+        converted = re.sub(r"(?m)^(#{1,6})\s+(.+)$", lambda m: f"*{m.group(2).strip()}*", converted)
+        converted = re.sub(r"\*\*(.+?)\*\*", r"*\1*", converted)
+        converted = re.sub(r"__(.+?)__", r"*\1*", converted)
+        converted = re.sub(r"\[(.+?)\]\((https?://[^\s)]+)\)", r"<\2|\1>", converted)
+        return converted
+
+    def _slack_fallback_text(self, text: str) -> str:
+        fallback = re.sub(r"```.*?```", "[code block]", text, flags=re.DOTALL)
+        fallback = re.sub(r"`([^`]+)`", r"\1", fallback)
+        fallback = re.sub(r"\[(.+?)\]\((https?://[^\s)]+)\)", r"\1: \2", fallback)
+        fallback = fallback.replace("**", "").replace("__", "")
+        fallback = re.sub(r"(?m)^#{1,6}\s+", "", fallback)
+        return fallback
 
     def _match_prefix(self, raw_text: str) -> str | None:
         for prefix in self.config.slack.behavior.prefixes:

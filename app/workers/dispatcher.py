@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from app.connectors.slack import SlackConnector
 from app.models import NormalizedMessage
@@ -98,15 +99,22 @@ class Dispatcher:
         thread_ts = root_message.payload.get("thread_ts") or root_message.payload.get("ts")
         await self.slack_connector.send_message(
             channel=str(channel),
-            text=self._truncate_reply(str(output_message.payload.get("summary") or output_message.payload.get("content", ""))),
+            text=self._sanitize_slack_reply(str(output_message.payload.get("content", ""))),
             thread_ts=str(thread_ts) if thread_ts else None,
         )
 
-    def _truncate_reply(self, text: str, max_length: int = 900) -> str:
-        compact = " ".join(text.split())
-        if len(compact) <= max_length:
-            return compact
-        return compact[: max_length - 3].rstrip() + "..."
+    def _sanitize_slack_reply(self, text: str) -> str:
+        lines = text.splitlines()
+        kept: list[str] = []
+        for line in lines:
+            if "/mnt/memory/" in line:
+                continue
+            if re.match(r"^\s*(:file_folder:|written to:|paths written:)\s*$", line.strip(), flags=re.IGNORECASE):
+                continue
+            kept.append(line)
+        cleaned = "\n".join(kept)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+        return cleaned or "Completed."
 
     def _find_root_message(self, message: NormalizedMessage) -> NormalizedMessage:
         current = message

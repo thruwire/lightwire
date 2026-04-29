@@ -374,7 +374,23 @@ def test_slack_reply_uses_chat_post_message_with_channel_and_thread(tmp_path) ->
     web_client = FakeSlackWebClient()
     connector = SlackConnector(config, repo, _noop_dispatch, web_client=web_client)
     asyncio.run(connector.send_message("C123456", "done", thread_ts="1710000000.000100"))
-    assert web_client.messages == [{"channel": "C123456", "text": "done", "thread_ts": "1710000000.000100"}]
+    assert web_client.messages == [
+        {
+            "channel": "C123456",
+            "text": "done",
+            "mrkdwn": True,
+            "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "done"}}],
+            "thread_ts": "1710000000.000100",
+        }
+    ]
+
+
+def test_slack_markdown_conversion(tmp_path) -> None:
+    repo = _build_repo(tmp_path)
+    config = _build_config(tmp_path)
+    connector = SlackConnector(config, repo, _noop_dispatch)
+    text = "# Title\n\n**bold** and [link](https://example.com)"
+    assert connector._to_slack_mrkdwn(text) == "*Title*\n\n*bold* and <https://example.com|link>"
 
 
 def test_slack_polling_cursor_logic(tmp_path) -> None:

@@ -98,6 +98,22 @@ ThruFlow treats deployment as an explicit control-plane operation. The deploy/ap
 The full runtime walk-through is in [docs/architecture.md](./docs/architecture.md).
 - Routes can optionally mark a terminal output for Telegram reply delivery when the originating correlation came from Telegram.
 
+## Common Patterns
+
+Two patterns are worth calling out because they are easy to adopt and cover a lot of real usage.
+
+Heartbeat-driven automation:
+
+- `workspace/heartbeats.yaml` lets you schedule routable prompts on an interval.
+- A heartbeat emits a normalized `heartbeat.tick` message and enters the same routing pipeline as Slack, API, and agent output events.
+- This is useful for recurring research, queue draining, status checks, and scheduled summarization without building a separate scheduler outside ThruFlow.
+
+Slack request/response agents:
+
+- A user can send a Slack message to ThruFlow, have that message flow through one or more managed agents, and receive the final reply back in Slack at the end of the chain.
+- Slack is just another normalized message source, so the same route chain can start from `source=slack` and end with a reply action.
+- In practice this makes it straightforward to build a Slack-facing agent flow such as intake → research → response, where the user asks in Slack and gets the finished answer back in Slack, usually in the same thread.
+
 ## Artifact Handoff Convention
 
 Agents should:
@@ -233,6 +249,8 @@ Slack app setup:
 In Socket Mode, ThruFlow acknowledges Slack envelopes quickly, normalizes supported message events, and routes them through the same dispatcher used by API, Telegram, heartbeats, and agent outputs.
 
 Slack config supports multiple channels and accepts either `channel_id` or `channel_name`. Channel names are resolved to IDs at connector startup and stored internally as channel IDs. By default, messages in channels only trigger when the bot is explicitly addressed with a mention, though you can also configure accepted prefixes. DMs are supported separately through `behavior.allow_dms`.
+
+This makes a Slack agent flow simple to expose operationally: send a message to your ThruFlow bot in Slack, let the configured route chain run, and get the final reply back in Slack when the flow completes.
 
 Example:
 
