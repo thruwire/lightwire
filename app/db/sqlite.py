@@ -355,6 +355,17 @@ class SqliteProviderStateRepository(ProviderStateRepository):
         )
         return ProviderStateRecord.model_validate({**row, "metadata": _from_json(row["metadata"])}) if row else None
 
+    def list_by_type(self, provider: str, resource_type: str) -> list[ProviderStateRecord]:
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM provider_state
+            WHERE provider = ? AND resource_type = ?
+            ORDER BY logical_key
+            """,
+            (provider, resource_type),
+        )
+        return [ProviderStateRecord.model_validate({**row, "metadata": _from_json(row["metadata"])}) for row in rows]
+
     def upsert(self, record: ProviderStateRecord) -> None:
         # Provider state is keyed by logical resource name, not raw ID, so recreated workspaces can reuse the same lookup path.
         self.db.execute(
@@ -376,4 +387,13 @@ class SqliteProviderStateRepository(ProviderStateRepository):
                 record.created_at.isoformat(),
                 record.updated_at.isoformat(),
             ),
+        )
+
+    def delete(self, provider: str, resource_type: str, logical_key: str) -> None:
+        self.db.execute(
+            """
+            DELETE FROM provider_state
+            WHERE provider = ? AND resource_type = ? AND logical_key = ?
+            """,
+            (provider, resource_type, logical_key),
         )

@@ -53,4 +53,53 @@ class DeploymentService:
                 )
             )
             results.append(result)
+        await self._reconcile_removed_agents()
         return results
+
+    async def _reconcile_removed_agents(self) -> None:
+        configured_agent_ids = {agent_id for agent_id, agent in self.config.agents.items() if agent.enabled}
+        configured_mcp_agents = {
+            agent_id
+            for agent_id, agent in self.config.agents.items()
+            if agent.enabled and agent.tools.mcp
+        }
+
+        # SQLite reconciliation catches agents that used to exist locally but have
+        # since been removed from workspace config.
+        for record in self.provider_state.list_by_type("claude_managed_agents", "agent"):
+            if record.logical_key in configured_agent_ids:
+                continue
+            await self.resources.client.archive_agent(record.external_id)
+            self.provider_state.delete("claude_managed_agents", "agent", record.logical_key)
+
+        for record in self.provider_state.list_by_type("claude_managed_agents", "vault_credential"):
+            agent_id = record.logical_key.split(":")[1] if ":" in record.logical_key else ""
+            if agent_id in configured_mcp_agents:
+                continue
+            self.provider_state.delete("claude_managed_agents", "vault_credential", record.logical_key)
+
+        for record in self.provider_state.list_by_type("claude_managed_agents", "vault"):
+            agent_id = record.logical_key.removeprefix("vault:")
+            if agent_id in configured_mcp_agents:
+                continue
+            await self._archive_remote_vault_tree(record.external_id)
+            self.provider_state.delete("claude_managed_agents", "vault", record.logical_key)
+
+        # Remote reconciliation catches orphaned Anthropic resources even if the
+        # local SQLite state was lost or never recorded correctly.
+        for item in await self.resources.client.list_managed_agents():
+            slug = str((item.get("metadata") or {}).get("managed_agents_slug") or "")
+            if not slug or slug in configured_agent_ids:
+                continue
+            await self.resources.client.archive_agent(self.resources.client._extract_id(item))
+
+        for item in await self.resources.client.list_managed_vaults():
+            slug = str((item.get("metadata") or {}).get("managed_agents_slug") or "")
+            if not slug or slug in configured_mcp_agents:
+                continue
+            await self._archive_remote_vault_tree(self.resources.client._extract_id(item))
+
+    async def _archive_remote_vault_tree(self, vault_id: str) -> None:
+        for credential in await self.resources.client.list_vault_credentials(vault_id):
+            await self.resources.client.archive_vault_credential(vault_id, self.resources.client._extract_id(credential))
+        await self.resources.client.archive_vault(vault_id)

@@ -488,9 +488,17 @@ def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
         deploy_calls.append(existing_agent_id)
         return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id.title(), "version": 7}
 
+    async def fake_list_managed_agents() -> list[dict[str, object]]:
+        return []
+
+    async def fake_list_managed_vaults() -> list[dict[str, object]]:
+        return []
+
     state.resources.ensure = fake_ensure  # type: ignore[method-assign]
     state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
     state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
+    state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
+    state.claude.list_managed_vaults = fake_list_managed_vaults  # type: ignore[method-assign]
 
     results = asyncio.run(state.deploy.apply())
 
@@ -499,3 +507,143 @@ def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
     assert deploy_calls
     assert results
     assert state.provider_state.get("claude_managed_agents", "agent", "researcher").external_id == "agent_remote_researcher"
+
+
+def test_deployment_service_archives_removed_agents_and_vaults_from_state(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+    state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="agent",
+            logical_key="obsolete",
+            external_id="agent_obsolete",
+            metadata={},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="vault",
+            logical_key="vault:obsolete",
+            external_id="vault_obsolete",
+            metadata={},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="vault_credential",
+            logical_key="vault_credential:obsolete:external_research",
+            external_id="cred_obsolete",
+            metadata={},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+
+    archived_agents: list[str] = []
+    archived_vaults: list[str] = []
+    archived_credentials: list[tuple[str, str]] = []
+
+    async def fake_ensure(*, verify_remote: bool = False) -> tuple[str, str]:
+        return "env", "mem"
+
+    async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+        return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
+
+    async def fake_archive_agent(agent_id: str) -> None:
+        archived_agents.append(agent_id)
+
+    async def fake_list_managed_agents() -> list[dict[str, object]]:
+        return []
+
+    async def fake_list_managed_vaults() -> list[dict[str, object]]:
+        return []
+
+    async def fake_list_vault_credentials(vault_id: str) -> list[dict[str, object]]:
+        return [{"id": "cred_obsolete"}] if vault_id == "vault_obsolete" else []
+
+    async def fake_archive_vault_credential(vault_id: str, credential_id: str) -> None:
+        archived_credentials.append((vault_id, credential_id))
+
+    async def fake_archive_vault(vault_id: str) -> None:
+        archived_vaults.append(vault_id)
+
+    state.resources.ensure = fake_ensure  # type: ignore[method-assign]
+    state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
+    state.claude.archive_agent = fake_archive_agent  # type: ignore[method-assign]
+    state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
+    state.claude.list_managed_vaults = fake_list_managed_vaults  # type: ignore[method-assign]
+    state.claude.list_vault_credentials = fake_list_vault_credentials  # type: ignore[method-assign]
+    state.claude.archive_vault_credential = fake_archive_vault_credential  # type: ignore[method-assign]
+    state.claude.archive_vault = fake_archive_vault  # type: ignore[method-assign]
+
+    asyncio.run(state.deploy.apply())
+
+    assert archived_agents == ["agent_obsolete"]
+    assert archived_credentials == [("vault_obsolete", "cred_obsolete")]
+    assert archived_vaults == ["vault_obsolete"]
+    assert state.provider_state.get("claude_managed_agents", "agent", "obsolete") is None
+    assert state.provider_state.get("claude_managed_agents", "vault", "vault:obsolete") is None
+    assert state.provider_state.get("claude_managed_agents", "vault_credential", "vault_credential:obsolete:external_research") is None
+
+
+def test_deployment_service_archives_remote_orphaned_agents(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+    state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+
+    archived_agents: list[str] = []
+
+    async def fake_ensure(*, verify_remote: bool = False) -> tuple[str, str]:
+        return "env", "mem"
+
+    async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+        return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
+
+    async def fake_list_managed_agents() -> list[dict[str, object]]:
+        return [
+            {"id": "agent_orphan", "metadata": {"managed_agents_repo": "thruflow", "managed_agents_slug": "obsolete"}},
+            {"id": "agent_keep", "metadata": {"managed_agents_repo": "thruflow", "managed_agents_slug": "researcher"}},
+        ]
+
+    async def fake_archive_agent(agent_id: str) -> None:
+        archived_agents.append(agent_id)
+
+    async def fake_list_managed_vaults() -> list[dict[str, object]]:
+        return []
+
+    state.resources.ensure = fake_ensure  # type: ignore[method-assign]
+    state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
+    state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
+    state.claude.archive_agent = fake_archive_agent  # type: ignore[method-assign]
+    state.claude.list_managed_vaults = fake_list_managed_vaults  # type: ignore[method-assign]
+
+    asyncio.run(state.deploy.apply())
+
+    assert archived_agents == ["agent_orphan"]

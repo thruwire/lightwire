@@ -75,6 +75,32 @@ class ClaudeManagedAgentClient:
     async def agent_exists(self, agent_id: str) -> bool:
         return await self._resource_exists(["beta:agents", "retrieve", "--agent-id", agent_id, "--format", "json"])
 
+    async def list_managed_agents(self) -> list[dict[str, Any]]:
+        return await self._list_managed_resources(["beta:agents", "list", "--limit", "100", "--max-items", "-1", "--format", "json"])
+
+    async def list_managed_vaults(self) -> list[dict[str, Any]]:
+        return await self._list_managed_resources(["beta:vaults", "list", "--limit", "100", "--max-items", "-1", "--format", "json"])
+
+    async def list_vault_credentials(self, vault_id: str) -> list[dict[str, Any]]:
+        if self.config.settings.thruflow_fake_claude:
+            return []
+        await self._require_ant()
+        payload = await self._run_ant_json(
+            ["beta:vaults:credentials", "list", "--vault-id", vault_id, "--limit", "100", "--max-items", "-1", "--format", "json"]
+        )
+        return self._list_items(payload)
+
+    async def archive_agent(self, agent_id: str) -> None:
+        await self._archive_resource(["beta:agents", "archive", "--agent-id", agent_id, "--format", "json"])
+
+    async def archive_vault(self, vault_id: str) -> None:
+        await self._archive_resource(["beta:vaults", "archive", "--vault-id", vault_id, "--format", "json"])
+
+    async def archive_vault_credential(self, vault_id: str, credential_id: str) -> None:
+        await self._archive_resource(
+            ["beta:vaults:credentials", "archive", "--vault-id", vault_id, "--credential-id", credential_id, "--format", "json"]
+        )
+
     async def environment_exists(self, environment_id: str) -> bool:
         return await self._resource_exists(["beta:environments", "retrieve", "--environment-id", environment_id, "--format", "json"])
 
@@ -529,6 +555,27 @@ class ClaudeManagedAgentClient:
         except RuntimeError:
             return False
         return True
+
+    async def _archive_resource(self, args: list[str]) -> None:
+        if self.config.settings.thruflow_fake_claude:
+            return
+        await self._require_ant()
+        try:
+            await self._run_ant_json(args)
+        except RuntimeError:
+            # Missing resources are already effectively reconciled from our point of view.
+            return
+
+    async def _list_managed_resources(self, args: list[str]) -> list[dict[str, Any]]:
+        if self.config.settings.thruflow_fake_claude:
+            return []
+        await self._require_ant()
+        payload = await self._run_ant_json(args)
+        return [
+            item
+            for item in self._list_items(payload)
+            if (item.get("metadata") or {}).get("managed_agents_repo") == "thruflow"
+        ]
 
     async def _run_ant_json(self, args: list[str], payload: dict[str, Any] | None = None) -> dict[str, Any]:
         output = await self._run_ant_command(args, payload)
