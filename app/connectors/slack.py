@@ -127,7 +127,9 @@ class SlackConnector:
                 messages.extend(await self._poll_channel(client, channel.channel_id, channel.include_threads))
         return messages
 
-    async def handle_socket_request(self, request: Any) -> None:
+    async def handle_socket_request(self, client_or_request: Any, request: Any | None = None) -> None:
+        if request is None:
+            request = client_or_request
         await self._ack_socket_request(request)
         task = asyncio.create_task(self._dispatch_socket_request(request))
         self._background_tasks.add(task)
@@ -136,29 +138,37 @@ class SlackConnector:
     def normalize_event(self, event: dict[str, Any], *, mode: str, event_id: str | None = None) -> NormalizedMessage | None:
         event_type = str(event.get("type", ""))
         if event_type not in {"message", "app_mention"}:
+            self._log_event_drop("unsupported_event_type", event, mode=mode, event_id=event_id)
             return None
         if event.get("subtype"):
+            self._log_event_drop("unsupported_subtype", event, mode=mode, event_id=event_id)
             return None
         user = event.get("user")
         if self.config.slack.ignore_bot_messages and (event.get("bot_id") or user is None):
+            self._log_event_drop("ignored_bot_or_missing_user", event, mode=mode, event_id=event_id)
             return None
         if self._bot_user_id and user == self._bot_user_id:
+            self._log_event_drop("ignored_self_message", event, mode=mode, event_id=event_id)
             return None
         channel_id = str(event.get("channel", ""))
         channel_type = str(event.get("channel_type") or "")
         is_dm = channel_type == "im"
         if is_dm:
             if not self.config.slack.behavior.allow_dms:
+                self._log_event_drop("dms_disabled", event, mode=mode, event_id=event_id)
                 return None
         elif not self._channel_allowed(channel_id):
+            self._log_event_drop("channel_not_allowed", event, mode=mode, event_id=event_id)
             return None
         thread_ts = event.get("thread_ts")
         if thread_ts and thread_ts != event.get("ts") and not self._include_threads_for_channel(channel_id):
+            self._log_event_drop("threads_disabled_for_channel", event, mode=mode, event_id=event_id)
             return None
         explicit_address = self._extract_explicit_address(event, is_dm=is_dm)
         if explicit_address is None:
+            self._log_event_drop("not_explicitly_addressed", event, mode=mode, event_id=event_id)
             return None
-        return NormalizedMessage(
+        message = NormalizedMessage(
             id=new_id("msg"),
             source=MessageSource.SLACK,
             type=MessageType.MESSAGE_CREATED,
@@ -183,14 +193,39 @@ class SlackConnector:
             },
             created_at=utc_now(),
         )
+        logger.info(
+            "Slack event accepted mode=%s event_id=%s channel=%s channel_type=%s user=%s ts=%s mentioned_bot=%s matched_prefix=%s text=%r",
+            mode,
+            event_id or "",
+            channel_id,
+            channel_type or "channel",
+            user,
+            event.get("ts"),
+            explicit_address["mentioned_bot"],
+            explicit_address["matched_prefix"],
+            explicit_address["text"],
+        )
+        return message
 
     async def _dispatch_socket_request(self, request: Any) -> None:
         if getattr(request, "type", None) != "events_api":
+            logger.info("Slack socket request ignored type=%s", getattr(request, "type", None))
             return
         payload = getattr(request, "payload", {}) or {}
         event = payload.get("event") or {}
+        logger.info(
+            "Slack socket event received event_id=%s type=%s subtype=%s channel=%s channel_type=%s user=%s text=%r",
+            payload.get("event_id"),
+            event.get("type"),
+            event.get("subtype"),
+            event.get("channel"),
+            event.get("channel_type"),
+            event.get("user"),
+            event.get("text", ""),
+        )
         dedupe_key = self._dedupe_key(payload.get("event_id"), event)
         if self._is_duplicate(dedupe_key):
+            logger.info("Slack socket event ignored as duplicate dedupe_key=%s", dedupe_key)
             return
         normalized = self.normalize_event(event, mode="socket", event_id=payload.get("event_id"))
         if normalized is None:
@@ -346,11 +381,25 @@ class SlackConnector:
             auth = await web_client.auth_test()
             self._bot_user_id = str(auth["user_id"])
         await self._resolve_allowed_channels(web_client)
+        logger.info(
+            "Slack runtime prepared bot_user_id=%s allowed_channel_ids=%s allow_dms=%s requires_mention=%s prefixes=%s",
+            self._bot_user_id,
+            sorted(self._allowed_channel_ids),
+            self.config.slack.behavior.allow_dms,
+            self.config.slack.behavior.requires_mention,
+            self.config.slack.behavior.prefixes,
+        )
 
     async def _resolve_allowed_channels(self, web_client: Any) -> None:
         cached_names = self._load_channel_cache()
         self._channel_name_cache = dict(cached_names)
-        unresolved = [channel for channel in self.config.slack.channels if not channel.channel_id and channel.channel_name]
+        # Prefer the persisted name->id cache when it already covers the configured
+        # channel names. This avoids an unnecessary Slack API call on every restart.
+        unresolved = [
+            channel
+            for channel in self.config.slack.channels
+            if not channel.channel_id and channel.channel_name and channel.channel_name not in self._channel_name_cache
+        ]
         if unresolved:
             self._channel_name_cache.update(await self._fetch_channel_name_map(web_client))
             self._save_channel_cache(self._channel_name_cache)
@@ -373,16 +422,35 @@ class SlackConnector:
         mapping: dict[str, str] = {}
         cursor: str | None = None
         while True:
-            response = await web_client.conversations_list(types="public_channel,private_channel", limit=1000, cursor=cursor)
-            for channel in response.get("channels", []) or []:
+            params: dict[str, Any] = {"types": "public_channel,private_channel", "limit": 1000}
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                response = await web_client.conversations_list(**params)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Slack channel_name resolution failed while calling conversations.list. "
+                    "Ensure the bot token has channels:read and groups:read, the app is installed, "
+                    "and prefer channel_id config if you do not want startup-time name resolution."
+                ) from exc
+            response_data = self._slack_response_data(response)
+            for channel in response_data.get("channels", []) or []:
                 name = channel.get("name")
                 channel_id = channel.get("id")
                 if name and channel_id:
                     mapping[str(name)] = str(channel_id)
-            cursor = response.get("response_metadata", {}).get("next_cursor") or None
+            cursor = response_data.get("response_metadata", {}).get("next_cursor") or None
             if not cursor:
                 break
         return mapping
+
+    def _slack_response_data(self, response: Any) -> dict[str, Any]:
+        if isinstance(response, dict):
+            return response
+        data = getattr(response, "data", None)
+        if isinstance(data, dict):
+            return data
+        return {}
 
     def _extract_explicit_address(self, event: dict[str, Any], *, is_dm: bool) -> dict[str, Any] | None:
         raw_text = str(event.get("text") or "")
@@ -410,6 +478,21 @@ class SlackConnector:
         if not cleaned_text:
             return None
         return {"text": cleaned_text, "mentioned_bot": mentioned_bot, "matched_prefix": matched_prefix}
+
+    def _log_event_drop(self, reason: str, event: dict[str, Any], *, mode: str, event_id: str | None = None) -> None:
+        logger.info(
+            "Slack event dropped reason=%s mode=%s event_id=%s type=%s subtype=%s channel=%s channel_type=%s user=%s ts=%s text=%r",
+            reason,
+            mode,
+            event_id or "",
+            event.get("type"),
+            event.get("subtype"),
+            event.get("channel"),
+            event.get("channel_type"),
+            event.get("user"),
+            event.get("ts"),
+            event.get("text", ""),
+        )
 
     def _match_prefix(self, raw_text: str) -> str | None:
         for prefix in self.config.slack.behavior.prefixes:

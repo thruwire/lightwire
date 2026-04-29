@@ -78,7 +78,7 @@ For the full provider and MCP flow, see [docs/provider-integration.md](./docs/pr
 
 ## Provider Resources
 
-On deploy or startup, ThruFlow reads the workspace, checks the state database for managed provider resource IDs, creates the Claude environment and shared memory store if they do not exist yet, persists those IDs, and reuses them on later runs. It also creates or reuses per-agent Anthropic vaults for MCP credentials when agents activate authenticated MCP servers.
+ThruFlow treats deployment as an explicit control-plane operation. The deploy/apply path reads the workspace, verifies or creates managed provider resources, persists their IDs in SQLite, and updates agent definitions. Normal app startup does not auto-deploy; it validates the previously persisted provider state and fails fast if the deploy step has not been run.
 
 ## Runtime Model
 
@@ -111,7 +111,8 @@ Agents do not need to return JSON.
 7. Set `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want connector ingestion enabled.
 8. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
 9. Install dependencies with `pip install -e .[dev]`.
-10. Start the API with `uvicorn app.main:app --reload`.
+10. Run `python scripts/deploy_managed_agents.py`.
+11. Start the API with `uvicorn app.main:app --reload`.
 
 ## Docker Setup
 
@@ -123,7 +124,7 @@ docker compose up --build
 
 The compose file mounts `./workspace` into `/app/workspace` as read-only and persists SQLite separately under `/app/data`.
 
-The published image and local Docker build include the Anthropic `ant` CLI so containerized deploy and runtime workflows can provision managed-agent resources without requiring `ant` on the host machine.
+The published image and local Docker build include the Anthropic `ant` CLI so containerized deploy workflows can provision managed-agent resources without requiring `ant` on the host machine.
 
 Operational details and troubleshooting live in [docs/operations.md](./docs/operations.md).
 

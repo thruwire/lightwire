@@ -31,6 +31,11 @@ class FakeSlackWebClient:
         return {"ok": True}
 
 
+class FailingSlackWebClient(FakeSlackWebClient):
+    async def conversations_list(self, **kwargs) -> dict[str, object]:
+        raise RuntimeError("missing_scope")
+
+
 class FakeSocketClient:
     def __init__(self) -> None:
         self.socket_mode_request_listeners: list[object] = []
@@ -154,6 +159,26 @@ def test_unknown_channel_name_fails_fast(tmp_path) -> None:
     config.slack.channels[0].channel_name = "does-not-exist"
     connector = SlackConnector(config, repo, _noop_dispatch, web_client=FakeSlackWebClient(channel_map={"ai-playground": "C123456"}))
     with pytest.raises(RuntimeError, match="does-not-exist"):
+        asyncio.run(connector.start())
+
+
+def test_channel_name_resolution_uses_cache_before_calling_slack(tmp_path) -> None:
+    repo = _build_repo(tmp_path)
+    config = _build_config(tmp_path)
+    config.slack.channels = [config.slack.channels[1]]
+    cache_path = Path(config.settings.sqlite_path).resolve().parent / "slack_channels.json"
+    cache_path.write_text('{"ai-playground": "C123456"}', encoding="utf-8")
+    connector = SlackConnector(config, repo, _noop_dispatch, web_client=FailingSlackWebClient())
+    asyncio.run(connector._prepare_runtime_state())
+    assert connector._allowed_channel_ids == {"C123456"}
+
+
+def test_channel_name_resolution_failure_is_clear(tmp_path) -> None:
+    repo = _build_repo(tmp_path)
+    config = _build_config(tmp_path)
+    config.slack.channels = [config.slack.channels[1]]
+    connector = SlackConnector(config, repo, _noop_dispatch, web_client=FailingSlackWebClient())
+    with pytest.raises(RuntimeError, match="conversations.list"):
         asyncio.run(connector.start())
 
 

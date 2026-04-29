@@ -8,13 +8,20 @@ Managed-agent provisioning in this repo uses the Anthropic `ant` CLI. ThruFlow u
 
 ThruFlow manages provider resource IDs itself instead of requiring them in `.env`.
 
-On startup or deploy:
+Deploy/apply is the mutating path:
 
 1. read the workspace
 2. look up existing provider state in SQLite
-3. create missing resources
-4. persist returned IDs
-5. reuse them on later runs
+3. verify cached IDs remotely
+4. create or repair missing resources
+5. persist returned IDs
+6. update agent definitions
+
+Runtime startup is the non-mutating path:
+
+1. read the workspace
+2. load cached provider state from SQLite
+3. fail fast if required deployment state is missing
 
 Current managed resources:
 
@@ -34,6 +41,8 @@ For live operation you still need:
 - `ANTHROPIC_API_KEY`
 - the `ant` CLI on `PATH`, or `ANT_BIN` pointing to it
 - a provider environment where managed-agent sessions are available
+
+The deploy wrapper script is `python scripts/deploy_managed_agents.py`, but the deployment logic itself lives in app code under `app/deploy/` and `app/claude/`. That keeps deployment testable and reusable without forcing startup to auto-deploy.
 
 If you want fully mocked behavior for tests or demos, set `THRUFLOW_FAKE_CLAUDE=true` explicitly.
 

@@ -12,6 +12,7 @@ from app.claude.sessions import ClaudeSessionService
 from app.config import RuntimeConfig, Settings, load_runtime_config
 from app.connectors.slack import SlackConnector
 from app.connectors.telegram import TelegramConnector
+from app.deploy.service import DeploymentService
 from app.db.sqlite import (
     SqliteAgentOutputRepository,
     SqliteConnectorCursorRepository,
@@ -46,6 +47,7 @@ class AppState:
     router: Router
     claude: ClaudeManagedAgentClient
     resources: ClaudeProviderResourceService
+    deploy: DeploymentService
     dispatcher: Dispatcher
     heartbeat_scheduler: HeartbeatScheduler
     slack_connector: SlackConnector
@@ -73,6 +75,7 @@ def build_state(settings: Settings | None = None) -> AppState:
     router = Router(config)
     claude = ClaudeManagedAgentClient(config)
     resources = ClaudeProviderResourceService(config, provider_state, claude)
+    deploy = DeploymentService(config, resources, provider_state)
     session_service = ClaudeSessionService(claude)
     output_handler = OutputHandler()
     dispatcher = Dispatcher(
@@ -100,6 +103,7 @@ def build_state(settings: Settings | None = None) -> AppState:
         router=router,
         claude=claude,
         resources=resources,
+        deploy=deploy,
         dispatcher=dispatcher,
         heartbeat_scheduler=heartbeat_scheduler,
         slack_connector=slack_connector,
@@ -111,9 +115,9 @@ def build_state(settings: Settings | None = None) -> AppState:
 async def lifespan(app: FastAPI):
     configure_logging()
     state = get_state(app)
-    # Provider resources are cached in SQLite so startup can reuse them instead of creating duplicates.
-    await state.resources.ensure()
-    await state.resources.ensure_all_agent_vaults()
+    # Startup only validates previously deployed provider state. Deploy/apply is a
+    # separate explicit operation so restarts do not mutate remote resources.
+    state.resources.assert_runtime_ready()
     await state.heartbeat_scheduler.start()
     await state.slack_connector.start()
     await state.telegram_connector.start()
@@ -190,8 +194,7 @@ def create_app() -> FastAPI:
         settings = current_state.config.settings if current_state else None
         state = build_state(settings)
         app.state.state = state
-        await state.resources.ensure()
-        await state.resources.ensure_all_agent_vaults()
+        state.resources.assert_runtime_ready()
         state.heartbeat_scheduler.initialize()
         return {"status": "reloaded"}
 

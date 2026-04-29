@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 from app.config import Settings
 from app.main import build_state
 from app.models import ProviderStateRecord
@@ -95,6 +97,44 @@ def test_live_agent_deploy_updates_existing_slug_and_archives_duplicates(tmp_pat
     assert not any(args[:2] == ["beta:agents", "create"] for args, _ in calls)
 
 
+def test_live_agent_deploy_prefers_cached_agent_id(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+    calls: list[tuple[list[str], dict | None]] = []
+
+    async def fake_require_ant() -> None:
+        return None
+
+    async def fake_run_ant_json(args: list[str], payload: dict | None = None) -> dict | list[dict]:
+        calls.append((args, payload))
+        if args[:2] == ["beta:agents", "retrieve"]:
+            return {"id": "agent_cached", "version": 5, "name": "Researcher"}
+        if args[:2] == ["beta:agents", "update"]:
+            return {"id": "agent_cached", "version": 6, "name": "Researcher"}
+        raise AssertionError(f"unexpected command: {args}")
+
+    state.claude._require_ant = fake_require_ant  # type: ignore[method-assign]
+    state.claude._run_ant_json = fake_run_ant_json  # type: ignore[method-assign]
+
+    result = asyncio.run(
+        state.claude.deploy_agent(
+            state.config.get_agent("researcher"),
+            state.config.get_agent_system_prompt("researcher"),
+            existing_agent_id="agent_cached",
+        )
+    )
+
+    assert result["id"] == "agent_cached"
+    assert any(args[:2] == ["beta:agents", "retrieve"] and args[3] == "agent_cached" for args, _ in calls)
+    assert any(args[:2] == ["beta:agents", "update"] and args[3] == "agent_cached" for args, _ in calls)
+    assert not any(args[:2] == ["beta:agents", "list"] for args, _ in calls)
+
+
 def test_live_resource_ensure_reuses_existing_cached_resources(tmp_path) -> None:
     state = build_state(
         Settings(
@@ -148,6 +188,70 @@ def test_live_resource_ensure_reuses_existing_cached_resources(tmp_path) -> None
     assert create_memory_store_calls == []
     assert state.provider_state.get("claude_managed_agents", "environment", "default").external_id == "env_cached"
     assert state.provider_state.get("claude_managed_agents", "memory_store", "shared").external_id == "mem_cached"
+
+
+def test_runtime_ready_raises_when_provider_state_missing(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="Provider resources have not been deployed yet"):
+        state.resources.assert_runtime_ready()
+
+
+def test_runtime_ready_uses_cached_provider_state_without_mutation(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+    state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+    state.config.agents["researcher"].tools.mcp = {}
+
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="environment",
+            logical_key="default",
+            external_id="env_cached",
+            metadata={"workspace": "workspace"},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="memory_store",
+            logical_key="shared",
+            external_id="mem_cached",
+            metadata={"workspace": "workspace"},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="agent",
+            logical_key="researcher",
+            external_id="agent_cached",
+            metadata={"name": "Researcher"},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+
+    state.resources.assert_runtime_ready()
+
+    assert state.config.get_provider_environment_id() == "env_cached"
+    assert state.config.get_provider_memory_store_id() == "mem_cached"
 
 
 def test_deploy_verify_remote_recreates_missing_cached_core_resources(tmp_path) -> None:
@@ -285,3 +389,41 @@ def test_deploy_verify_remote_recreates_missing_cached_vault_and_credential(tmp_
         ).external_id
         == "cred_new"
     )
+
+
+def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+
+    ensure_calls: list[bool] = []
+    vault_calls: list[bool] = []
+
+    async def fake_ensure(*, verify_remote: bool = False) -> tuple[str, str]:
+        ensure_calls.append(verify_remote)
+        return "env_id", "mem_id"
+
+    async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
+        vault_calls.append(verify_remote)
+
+    deploy_calls: list[str | None] = []
+
+    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+        deploy_calls.append(existing_agent_id)
+        return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id.title(), "version": 7}
+
+    state.resources.ensure = fake_ensure  # type: ignore[method-assign]
+    state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
+
+    results = asyncio.run(state.deploy.apply())
+
+    assert ensure_calls == [True]
+    assert vault_calls == [True]
+    assert deploy_calls
+    assert results
+    assert state.provider_state.get("claude_managed_agents", "agent", "researcher").external_id == "agent_remote_researcher"

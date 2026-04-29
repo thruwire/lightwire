@@ -33,7 +33,14 @@ class DeploymentService:
         for agent_id, agent in self.config.agents.items():
             if not agent.enabled:
                 continue
-            result = await self.resources.client.create_or_update_agent(agent_id)
+            # Agent deploy prefers the cached provider ID when available so repeated
+            # deploys update the same remote agent instead of depending on list lookup.
+            existing = self.provider_state.get("claude_managed_agents", "agent", agent_id)
+            result = await self.resources.client.deploy_agent(
+                self.config.get_agent(agent_id),
+                self.config.get_agent_system_prompt(agent_id),
+                existing_agent_id=existing.external_id if existing else None,
+            )
             self.provider_state.upsert(
                 ProviderStateRecord(
                     provider="claude_managed_agents",
@@ -41,7 +48,7 @@ class DeploymentService:
                     logical_key=agent_id,
                     external_id=str(result["id"]),
                     metadata={"name": result.get("name"), "version": result.get("version")},
-                    created_at=utc_now(),
+                    created_at=existing.created_at if existing else utc_now(),
                     updated_at=utc_now(),
                 )
             )

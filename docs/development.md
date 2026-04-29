@@ -28,6 +28,7 @@ When extending ThruFlow, keep these constraints in mind:
 - normalize source-specific events early
 - keep routing provider-neutral
 - isolate provider-specific translation in adapter modules
+- keep deployment logic in app code and use thin operational wrappers
 - keep shared workspace files declarative
 - persist enough local state to resume safely after restarts
 
@@ -50,6 +51,8 @@ To add an agent:
 2. create `workspace/agents/<agent_id>/AGENT.md`
 3. optionally attach skills and tools
 4. run `python scripts/deploy_managed_agents.py`
+
+The deploy script is only a wrapper. The real deployment path lives in `app/deploy/service.py`, which is the right place for future provider-agnostic deployment orchestration.
 
 ## Adding MCP Servers
 

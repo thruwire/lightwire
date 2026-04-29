@@ -65,6 +65,24 @@ class ClaudeProviderResourceService:
         self.config.attach_provider_state(environment.external_id, memory_store.external_id)
         return environment.external_id, memory_store.external_id
 
+    def attach_runtime_provider_state(self) -> tuple[str, str]:
+        """Load previously deployed provider IDs without mutating remote state.
+
+        Runtime startup should be deterministic and side-effect free. If the deploy
+        step has not persisted the required IDs yet, startup fails fast instead of
+        attempting an implicit provider mutation.
+        """
+
+        environment = self.repository.get("claude_managed_agents", "environment", "default")
+        memory_store = self.repository.get("claude_managed_agents", "memory_store", "shared")
+        if not environment or not memory_store:
+            raise RuntimeError(
+                "Provider resources have not been deployed yet. Run the managed-agent deploy step "
+                "before starting ThruFlow in live mode."
+            )
+        self.config.attach_provider_state(environment.external_id, memory_store.external_id)
+        return environment.external_id, memory_store.external_id
+
     async def ensure_agent_vaults(self, agent_id: str, *, verify_remote: bool = False) -> list[str]:
         agent = self.config.get_agent(agent_id)
         if not agent.tools.mcp:
@@ -127,6 +145,42 @@ class ClaudeProviderResourceService:
             if not agent.enabled:
                 continue
             await self.ensure_agent_vaults(agent_id, verify_remote=verify_remote)
+
+    def assert_runtime_ready(self) -> None:
+        """Validate that the deploy step has produced all required provider state."""
+
+        self.attach_runtime_provider_state()
+        for agent_id, agent in self.config.agents.items():
+            if not agent.enabled:
+                continue
+            agent_record = self.repository.get("claude_managed_agents", "agent", agent_id)
+            if not agent_record:
+                raise RuntimeError(
+                    f"Agent '{agent_id}' has not been deployed yet. Run the managed-agent deploy step "
+                    "before starting ThruFlow in live mode."
+                )
+            if not agent.tools.mcp:
+                continue
+            vault_record = self.repository.get("claude_managed_agents", "vault", f"vault:{agent_id}")
+            if not vault_record:
+                raise RuntimeError(
+                    f"Vault for agent '{agent_id}' has not been deployed yet. Run the managed-agent deploy step "
+                    "before starting ThruFlow in live mode."
+                )
+            for server_name in sorted(agent.tools.mcp):
+                server = self.config.tools.mcp_servers.get(server_name)
+                if not server or not server.enabled or server.auth.type == MCPServerAuthType.NONE:
+                    continue
+                credential = self.repository.get(
+                    "claude_managed_agents",
+                    "vault_credential",
+                    f"vault_credential:{agent_id}:{server_name}",
+                )
+                if not credential:
+                    raise RuntimeError(
+                        f"Vault credential for agent '{agent_id}' and MCP server '{server_name}' has not been deployed yet. "
+                        "Run the managed-agent deploy step before starting ThruFlow in live mode."
+                    )
 
     async def _verify_cached_core_resources(self, environment_id: str, memory_store_id: str) -> tuple[bool, bool]:
         return (

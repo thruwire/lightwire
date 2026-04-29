@@ -15,7 +15,13 @@ class ClaudeManagedAgentClient:
     def __init__(self, config: RuntimeConfig) -> None:
         self.config = config
 
-    async def deploy_agent(self, agent: AgentConfig, system_prompt: str) -> dict[str, Any]:
+    async def deploy_agent(
+        self,
+        agent: AgentConfig,
+        system_prompt: str,
+        *,
+        existing_agent_id: str | None = None,
+    ) -> dict[str, Any]:
         payload = self._build_agent_payload(agent, system_prompt)
         if self.config.settings.thruflow_fake_claude:
             return {
@@ -29,6 +35,19 @@ class ClaudeManagedAgentClient:
             }
 
         await self._require_ant()
+        # When deploy already knows the provider agent ID from SQLite, update that
+        # exact remote object directly. This avoids list-based rediscovery drift.
+        if existing_agent_id and await self.agent_exists(existing_agent_id):
+            existing = await self._run_ant_json(
+                ["beta:agents", "retrieve", "--agent-id", existing_agent_id, "--format", "json"]
+            )
+            update_payload = dict(payload)
+            if "version" in existing:
+                update_payload["version"] = existing["version"]
+            return await self._run_ant_json(
+                ["beta:agents", "update", "--agent-id", existing_agent_id, "--format", "json"],
+                update_payload,
+            )
         existing = await self._find_named_resource(
             ["beta:agents", "list", "--limit", "100", "--format", "json"],
             metadata_slug=agent.agent_id,
@@ -49,6 +68,9 @@ class ClaudeManagedAgentClient:
     async def create_or_update_agent(self, agent_id: str) -> dict[str, Any]:
         agent = self.config.get_agent(agent_id)
         return await self.deploy_agent(agent, self.config.get_agent_system_prompt(agent_id))
+
+    async def agent_exists(self, agent_id: str) -> bool:
+        return await self._resource_exists(["beta:agents", "retrieve", "--agent-id", agent_id, "--format", "json"])
 
     async def environment_exists(self, environment_id: str) -> bool:
         return await self._resource_exists(["beta:environments", "retrieve", "--environment-id", environment_id, "--format", "json"])
@@ -90,16 +112,20 @@ class ClaudeManagedAgentClient:
         }
         session = await self._run_ant_json(["beta:sessions", "create", "--format", "json"], session_payload)
         session_id = str(session["id"])
-        await self._run_ant_json(
-            ["beta:sessions:events", "send", "--session-id", session_id, "--format", "json"],
-            {
-                "event": [
+        await self._run_ant_command(
+            [
+                "beta:sessions:events",
+                "send",
+                "--session-id",
+                session_id,
+                "--event",
+                json.dumps(
                     {
                         "type": "user.message",
                         "content": [{"type": "text", "text": request.task_prompt}],
                     }
-                ]
-            },
+                ),
+            ]
         )
         content, status, events_payload = await self._wait_for_session_output(session_id)
         return ClaudeSessionResult(
@@ -399,6 +425,12 @@ class ClaudeManagedAgentClient:
         return True
 
     async def _run_ant_json(self, args: list[str], payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        output = await self._run_ant_command(args, payload)
+        if not output:
+            return {}
+        return self._parse_ant_json_output(output, args)
+
+    async def _run_ant_command(self, args: list[str], payload: dict[str, Any] | None = None) -> str:
         process = await asyncio.create_subprocess_exec(
             self.config.settings.ant_bin,
             *args,
@@ -415,10 +447,7 @@ class ClaudeManagedAgentClient:
                 f"{stderr.decode().strip()}\n"
                 f"{'Payload:\n' + payload_text if payload_text else ''}"
             )
-        output = stdout.decode().strip()
-        if not output:
-            return {}
-        return self._parse_ant_json_output(output, args)
+        return stdout.decode().strip()
 
     def _parse_ant_json_output(self, output: str, args: list[str]) -> dict[str, Any]:
         try:
