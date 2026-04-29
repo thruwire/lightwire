@@ -21,6 +21,7 @@ When you produce durable work:
 - Write the full artifact to an appropriate path under /mnt/memory/artifacts.
 - Write compact handoff notes, when useful, under /mnt/memory/handoffs.
 - Use the built-in write tool to persist those files at the exact paths you intend to hand off.
+- Do not use bash to create or modify durable artifact or handoff files.
 - Do not read directories like /mnt/memory; only read specific file paths you already know.
 - In your final response, mention every /mnt/memory path you wrote.
 

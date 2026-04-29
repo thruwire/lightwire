@@ -55,6 +55,7 @@ class RuntimeConfig(BaseModel):
     prompt_templates: dict[str, str] = Field(default_factory=dict)
     provider_environment_id: str | None = None
     provider_memory_store_id: str | None = None
+    provider_memory_mount_path: str | None = None
 
     def get_agent(self, agent_id: str) -> AgentConfig:
         return self.agents[agent_id]
@@ -62,6 +63,7 @@ class RuntimeConfig(BaseModel):
     def get_agent_system_prompt(self, agent_id: str) -> str:
         agent = self.get_agent(agent_id)
         parts = [agent.instructions.strip()]
+        parts.append(f"Shared memory store mount path: {self.get_provider_memory_mount_path()}")
         for skill_id in agent.skills:
             skill = self.skills.get(skill_id)
             if skill and skill.enabled:
@@ -78,9 +80,15 @@ class RuntimeConfig(BaseModel):
             )
         return self.prompt_templates[template_key]
 
-    def attach_provider_state(self, environment_id: str, memory_store_id: str) -> None:
+    def attach_provider_state(
+        self,
+        environment_id: str,
+        memory_store_id: str,
+        memory_mount_path: str | None = None,
+    ) -> None:
         self.provider_environment_id = environment_id
         self.provider_memory_store_id = memory_store_id
+        self.provider_memory_mount_path = memory_mount_path or self.default_provider_memory_mount_path()
 
     def get_provider_environment_id(self) -> str:
         if not self.provider_environment_id:
@@ -91,6 +99,12 @@ class RuntimeConfig(BaseModel):
         if not self.provider_memory_store_id:
             raise RuntimeError("Provider memory store ID has not been initialized.")
         return self.provider_memory_store_id
+
+    def default_provider_memory_mount_path(self) -> str:
+        return f"/mnt/memory/thruflow-{self.workspace_path.name}-shared-memory"
+
+    def get_provider_memory_mount_path(self) -> str:
+        return self.provider_memory_mount_path or self.default_provider_memory_mount_path()
 
 
 def _expand_env_vars(value: Any) -> Any:

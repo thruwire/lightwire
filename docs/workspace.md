@@ -76,6 +76,7 @@ Templates are rendered with Jinja-style variables. Supported context includes:
 - `metadata`
 - `correlation_id`
 - `parent_message_id`
+- `memory_mount_path`
 
 If a route references a missing template file, ThruFlow raises a clear `FileNotFoundError`.
 

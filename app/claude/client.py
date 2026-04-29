@@ -303,6 +303,7 @@ class ClaudeManagedAgentClient:
                 event_dict = self._sdk_to_plain_data(event)
                 events_payload.append(event_dict)
                 event_type = getattr(event, "type", None) or event_dict.get("type")
+                self._log_sdk_event_anomalies(session_id, event_type, event_dict)
                 if event_type == "agent.message":
                     for block in getattr(event, "content", []) or event_dict.get("content", []) or []:
                         block_type = getattr(block, "type", None) if not isinstance(block, dict) else block.get("type")
@@ -331,6 +332,26 @@ class ClaudeManagedAgentClient:
             final_status,
             {"session": self._sdk_to_plain_data(session), "events": events_payload, "cleanup": cleanup},
         )
+
+    def _log_sdk_event_anomalies(self, session_id: str, event_type: str | None, event_dict: dict[str, Any]) -> None:
+        if event_dict.get("error"):
+            logger.error(
+                "Managed-agent session event error session_id=%s event_type=%s payload=%s",
+                session_id,
+                event_type,
+                json.dumps(event_dict),
+            )
+            return
+        for block in event_dict.get("content", []) or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_result" and block.get("is_error"):
+                logger.warning(
+                    "Managed-agent tool result anomaly session_id=%s event_type=%s block=%s",
+                    session_id,
+                    event_type,
+                    json.dumps(block),
+                )
 
     async def _wait_for_session_output(self, session_id: str, timeout_seconds: int = 120) -> tuple[str, SessionStatus, dict[str, Any]]:
         deadline = asyncio.get_running_loop().time() + timeout_seconds

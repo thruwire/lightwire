@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from app.connectors.slack import SlackConnector
 from app.models import NormalizedMessage
 from app.repositories.messages import MessageRepository
@@ -8,6 +10,9 @@ from app.routing.router import Router
 from app.connectors.telegram import TelegramConnector
 from app.workers.output_handler import OutputHandler
 from app.workers.session_runner import SessionRunner
+
+
+logger = logging.getLogger(__name__)
 
 
 class Dispatcher:
@@ -56,10 +61,16 @@ class Dispatcher:
             return
         root_message = self._find_root_message(parent_message)
         if reply.get("connector") == "telegram":
-            await self._reply_telegram(output_message, root_message)
+            try:
+                await self._reply_telegram(output_message, root_message)
+            except Exception:
+                logger.exception("Telegram reply delivery failed for message %s", output_message.id)
             return
         if reply.get("connector") == "slack":
-            await self._reply_slack(output_message, root_message)
+            try:
+                await self._reply_slack(output_message, root_message)
+            except Exception:
+                logger.exception("Slack reply delivery failed for message %s", output_message.id)
 
     async def _reply_telegram(self, output_message: NormalizedMessage, root_message: NormalizedMessage) -> None:
         if not self.telegram_connector or not self.telegram_connector.config.telegram.send_replies:

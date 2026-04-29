@@ -10,6 +10,11 @@ from typing import Any
 
 import httpx
 
+try:
+    from slack_sdk.errors import SlackApiError
+except ImportError:  # pragma: no cover - exercised through injected fakes in tests.
+    SlackApiError = Exception
+
 from app.config import RuntimeConfig
 from app.models import ConnectorCursorRecord, MessageSource, MessageType, NormalizedMessage, SlackMode
 from app.repositories.cursors import ConnectorCursorRepository
@@ -112,7 +117,20 @@ class SlackConnector:
         kwargs: dict[str, Any] = {"channel": channel, "text": text}
         if thread_ts:
             kwargs["thread_ts"] = thread_ts
-        await web_client.chat_postMessage(**kwargs)
+        try:
+            await web_client.chat_postMessage(**kwargs)
+        except SlackApiError as exc:
+            response = getattr(exc, "response", None)
+            details = getattr(response, "data", {}) if response is not None else {}
+            logger.error(
+                "Slack reply failed channel=%s thread_ts=%s error=%s needed=%s provided=%s",
+                channel,
+                thread_ts,
+                details.get("error"),
+                details.get("needed"),
+                details.get("provided"),
+            )
+            raise
 
     async def poll(self) -> list[NormalizedMessage]:
         if not self.config.slack.enabled or not self._should_use_polling_mode():
@@ -223,18 +241,23 @@ class SlackConnector:
             event.get("user"),
             event.get("text", ""),
         )
-        dedupe_key = self._dedupe_key(payload.get("event_id"), event)
-        if self._is_duplicate(dedupe_key):
-            logger.info("Slack socket event ignored as duplicate dedupe_key=%s", dedupe_key)
+        dedupe_keys = self._dedupe_keys(payload.get("event_id"), event)
+        duplicate_key = next((key for key in dedupe_keys if self._is_duplicate(key)), None)
+        if duplicate_key:
+            logger.info("Slack socket event ignored as duplicate dedupe_key=%s", duplicate_key)
             return
         normalized = self.normalize_event(event, mode="socket", event_id=payload.get("event_id"))
         if normalized is None:
             return
-        self._mark_processed(dedupe_key)
+        for dedupe_key in dedupe_keys:
+            self._mark_processed(dedupe_key)
         try:
             await self.dispatch_message(normalized)
         except Exception:
-            logger.exception("Slack Socket Mode dispatch failed for event %s", payload.get("event_id") or dedupe_key)
+            logger.exception(
+                "Slack Socket Mode dispatch failed for event %s",
+                payload.get("event_id") or next(iter(dedupe_keys), ""),
+            )
 
     async def _ack_socket_request(self, request: Any) -> None:
         if self.socket_client is None or not hasattr(self.socket_client, "send_socket_mode_response"):
@@ -334,10 +357,17 @@ class SlackConnector:
             return True
         return self._channel_thread_policy.get(channel_id, True)
 
-    def _dedupe_key(self, event_id: str | None, event: dict[str, Any]) -> str:
+    def _dedupe_keys(self, event_id: str | None, event: dict[str, Any]) -> list[str]:
+        keys: list[str] = []
         if event_id:
-            return f"slack:{event_id}"
-        return f"slack:{event.get('channel', '')}:{event.get('ts', '')}"
+            keys.append(f"slack:{event_id}")
+        keys.append(
+            "slack_msg:"
+            f"{event.get('channel', '')}:"
+            f"{event.get('ts', '')}:"
+            f"{event.get('user', '')}"
+        )
+        return keys
 
     def _is_duplicate(self, dedupe_key: str) -> bool:
         return self.cursors.get("slack_event", dedupe_key) is not None

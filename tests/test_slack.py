@@ -304,6 +304,38 @@ def test_duplicate_socket_event_ignored(tmp_path) -> None:
     assert len(dispatched) == 1
 
 
+def test_duplicate_socket_message_with_different_event_ids_ignored(tmp_path) -> None:
+    repo = _build_repo(tmp_path)
+    config = _build_config(tmp_path)
+    dispatched: list[NormalizedMessage] = []
+
+    async def dispatch(message: NormalizedMessage) -> list[str]:
+        dispatched.append(message)
+        return []
+
+    connector = SlackConnector(config, repo, dispatch, web_client=FakeSlackWebClient(), socket_client=FakeSocketClient())
+    request_one = SimpleNamespace(
+        type="events_api",
+        envelope_id="env-1",
+        payload={"event_id": "Ev1", "event": _slack_event(event_type="app_mention")},
+    )
+    request_two = SimpleNamespace(
+        type="events_api",
+        envelope_id="env-2",
+        payload={"event_id": "Ev2", "event": _slack_event(event_type="message")},
+    )
+
+    async def run_test() -> None:
+        await connector._prepare_runtime_state()
+        await connector.handle_socket_request(request_one)
+        await asyncio.sleep(0)
+        await connector.handle_socket_request(request_two)
+        await asyncio.sleep(0)
+
+    asyncio.run(run_test())
+    assert len(dispatched) == 1
+
+
 def test_socket_event_ack_happens_before_dispatch(tmp_path) -> None:
     repo = _build_repo(tmp_path)
     config = _build_config(tmp_path)

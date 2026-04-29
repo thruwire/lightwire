@@ -27,6 +27,7 @@ class Router:
                 "metadata": message.metadata,
                 "correlation_id": message.correlation_id,
                 "parent_message_id": message.parent_message_id,
+                "memory_mount_path": self.config.get_provider_memory_mount_path(),
             },
         )
 

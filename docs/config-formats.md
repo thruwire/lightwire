@@ -374,6 +374,7 @@ Template context:
 - `metadata`
 - `correlation_id`
 - `parent_message_id`
+- `memory_mount_path`
 
 Current convention:
 

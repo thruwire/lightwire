@@ -71,7 +71,7 @@ For the normal shared-memory artifact pattern, writable file tools are not optio
 
 - `read` lets downstream agents open specific artifact files.
 - `write` lets agents persist `/mnt/memory/artifacts/...` and `/mnt/memory/handoffs/...` outputs.
-- `bash` is often useful alongside `write` for simple shell-level file operations, but `write` should be the primary persistence path.
+- `bash` can still be useful for non-persistence shell tasks, but durable artifact and handoff files should be written with `write`, not shell redirection.
 - `web_search` and `web_fetch` should only be enabled on agents that actually need external research.
 
 For MCP auth, ThruFlow reads secret references from `workspace/tools.yaml`, creates or reuses Anthropic vaults and credentials, stores the resulting IDs in SQLite, and attaches the relevant `vault_ids` when sessions start. This keeps secrets out of reusable agent definitions while still supporting generic third-party MCP servers.
