@@ -1,6 +1,12 @@
+FROM golang:1.25 AS ant-builder
+
+RUN go install github.com/anthropics/anthropic-cli/cmd/ant@latest
+
 FROM python:3.12-slim
 
 WORKDIR /app
+
+COPY --from=ant-builder /go/bin/ant /usr/local/bin/ant
 
 COPY pyproject.toml README.md LICENSE ./
 COPY app ./app

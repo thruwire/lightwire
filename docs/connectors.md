@@ -15,8 +15,12 @@ Main behavior:
 
 - receive Events API envelopes over a Socket Mode WebSocket connection
 - acknowledge Slack envelopes quickly before dispatching long-running work
+- resolve configured `channel_name` values to `channel_id` at startup
+- fetch the bot user ID with `auth.test` so mentions can be recognized
 - normalize supported message events into `source=slack`
 - deduplicate redelivered events by Slack event ID, or by `channel:ts` when event ID is absent
+- support multiple configured channels plus DMs
+- require explicit bot addressing in channels by mention or configured prefix
 - poll configured channels with `conversations.history`
 - optionally poll thread roots with `conversations.replies`
 - ignore bot messages by default
@@ -26,6 +30,24 @@ Main behavior:
 Slack config lives in `workspace/slack.yaml`.
 
 Socket Mode is the default. Polling should only be used for fallback or backfill.
+
+Required Slack app setup for Socket Mode:
+
+- enable Socket Mode
+- create an app-level token with `connections:write`
+- add scopes:
+  - `app_mentions:read`
+  - `im:history`
+  - `chat:write`
+  - `channels:read`
+  - `channels:history` when using channel message events
+  - `groups:read` and `groups:history` when using private channels
+- subscribe to:
+  - `app_mention`
+  - `message.im`
+  - optionally `message.channels`
+  - optionally `message.groups`
+- ensure the bot is a member of configured channels
 
 ## Telegram
 

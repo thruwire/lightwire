@@ -8,7 +8,7 @@ from app.utils.time import utc_now
 
 
 def test_dispatcher_runs_demo_chain(tmp_path) -> None:
-    state = build_state(Settings(sqlite_path=str(tmp_path / "demo.db"), workspace_path="workspace"))
+    state = build_state(Settings(sqlite_path=str(tmp_path / "demo.db"), workspace_path="workspace", thruflow_fake_claude=True))
     message = NormalizedMessage(
         id=new_id("msg"),
         source=MessageSource.API,
@@ -30,7 +30,9 @@ def test_dispatcher_runs_demo_chain(tmp_path) -> None:
 
 
 def test_require_artifacts_blocks_downstream_routing(tmp_path) -> None:
-    state = build_state(Settings(sqlite_path=str(tmp_path / "require.db"), workspace_path="workspace"))
+    state = build_state(
+        Settings(sqlite_path=str(tmp_path / "require.db"), workspace_path="workspace", thruflow_fake_claude=True)
+    )
 
     async def fake_run(request):
         from app.models import ClaudeSessionResult, SessionStatus

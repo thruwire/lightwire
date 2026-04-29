@@ -10,6 +10,7 @@ def test_load_runtime_config() -> None:
     config = load_runtime_config(settings)
     assert "researcher" in config.agents
     assert "structured_notes" in config.skills
+    assert config.skills["structured_notes"].description
     assert "external_research" in config.tools.mcp_servers
     assert "web_search" in config.tools.built_in
     assert config.agents["researcher"].memory.access == "read_write"
@@ -25,3 +26,11 @@ def test_readme_explains_control_plane_data_plane_and_no_json() -> None:
     assert "control plane" in readme.lower()
     assert "data plane" in readme.lower()
     assert "Agents do not need to return JSON." in readme
+
+
+def test_skills_load_from_skill_md_frontmatter() -> None:
+    config = load_runtime_config(Settings(sqlite_path=":memory:", workspace_path="workspace"))
+    structured_notes = config.skills["structured_notes"]
+    assert structured_notes.skill_id == "structured_notes"
+    assert "Use this skill when the task requires structured synthesis" in structured_notes.instructions
+    assert "concise handoffs" in (structured_notes.description or "")

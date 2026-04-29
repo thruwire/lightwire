@@ -1,3 +1,0 @@
-skill_id: thruflow_workspace_creator
-enabled: true
-description: Creates ThruFlow workspaces for Claude-backed managed-agent deployments.

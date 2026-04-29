@@ -20,41 +20,52 @@ class ClaudeProviderResourceService:
         self.repository = repository
         self.client = client
 
-    async def ensure(self) -> tuple[str, str]:
+    async def ensure(self, *, verify_remote: bool = False) -> tuple[str, str]:
         # Provider IDs are cached in SQLite so deploy/startup can be safely repeated.
         environment = self.repository.get("claude_managed_agents", "environment", "default")
         memory_store = self.repository.get("claude_managed_agents", "memory_store", "shared")
 
-        if not environment:
-            environment_id = await self.client.create_environment(self._environment_name())
-            environment = ProviderStateRecord(
-                provider="claude_managed_agents",
-                resource_type="environment",
-                logical_key="default",
-                external_id=environment_id,
-                metadata={"workspace": self.config.workspace_path.name},
-                created_at=utc_now(),
-                updated_at=utc_now(),
-            )
-            self.repository.upsert(environment)
+        if environment and memory_store and not verify_remote:
+            self.config.attach_provider_state(environment.external_id, memory_store.external_id)
+            return environment.external_id, memory_store.external_id
 
-        if not memory_store:
-            memory_store_id = await self.client.create_memory_store(self._memory_store_name())
-            memory_store = ProviderStateRecord(
-                provider="claude_managed_agents",
-                resource_type="memory_store",
-                logical_key="shared",
-                external_id=memory_store_id,
-                metadata={"workspace": self.config.workspace_path.name, "access": "read_write"},
-                created_at=utc_now(),
-                updated_at=utc_now(),
+        if environment and memory_store and verify_remote:
+            environment_exists, memory_store_exists = await self._verify_cached_core_resources(
+                environment.external_id,
+                memory_store.external_id,
             )
-            self.repository.upsert(memory_store)
+            if environment_exists and memory_store_exists:
+                self.config.attach_provider_state(environment.external_id, memory_store.external_id)
+                return environment.external_id, memory_store.external_id
+
+        environment_id = await self.client.create_environment(self._environment_name())
+        environment = ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="environment",
+            logical_key="default",
+            external_id=environment_id,
+            metadata={"workspace": self.config.workspace_path.name},
+            created_at=environment.created_at if environment else utc_now(),
+            updated_at=utc_now(),
+        )
+        self.repository.upsert(environment)
+
+        memory_store_id = await self.client.create_memory_store(self._memory_store_name())
+        memory_store = ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="memory_store",
+            logical_key="shared",
+            external_id=memory_store_id,
+            metadata={"workspace": self.config.workspace_path.name, "access": "read_write"},
+            created_at=memory_store.created_at if memory_store else utc_now(),
+            updated_at=utc_now(),
+        )
+        self.repository.upsert(memory_store)
 
         self.config.attach_provider_state(environment.external_id, memory_store.external_id)
         return environment.external_id, memory_store.external_id
 
-    async def ensure_agent_vaults(self, agent_id: str) -> list[str]:
+    async def ensure_agent_vaults(self, agent_id: str, *, verify_remote: bool = False) -> list[str]:
         agent = self.config.get_agent(agent_id)
         if not agent.tools.mcp:
             return []
@@ -62,7 +73,11 @@ class ClaudeProviderResourceService:
         vault_key = f"vault:{agent_id}"
         # Vaults are per-agent because the same MCP server may be enabled for some agents and withheld from others.
         vault = self.repository.get("claude_managed_agents", "vault", vault_key)
-        if not vault:
+        if vault and not verify_remote:
+            vault_id = vault.external_id
+        elif vault and verify_remote and await self.client.vault_exists(vault.external_id):
+            vault_id = vault.external_id
+        else:
             vault_id = await self.client.create_vault(
                 display_name=f"{agent.display_name or agent.agent_id} MCP",
                 metadata={"workspace": self.config.workspace_path.name, "agent_id": agent.agent_id},
@@ -73,7 +88,7 @@ class ClaudeProviderResourceService:
                 logical_key=vault_key,
                 external_id=vault_id,
                 metadata={"workspace": self.config.workspace_path.name, "agent_id": agent.agent_id},
-                created_at=utc_now(),
+                created_at=vault.created_at if vault else utc_now(),
                 updated_at=utc_now(),
             )
             self.repository.upsert(vault)
@@ -85,30 +100,50 @@ class ClaudeProviderResourceService:
             credential_key = f"vault_credential:{agent_id}:{server_name}"
             credential = self.repository.get("claude_managed_agents", "vault_credential", credential_key)
             auth_payload = self._build_vault_auth_payload(server_name)
-            if not credential:
-                credential_id = await self.client.create_or_update_vault_credential(
-                    vault_id=vault.external_id,
-                    display_name=f"{agent.display_name or agent.agent_id} {server_name} Credential",
-                    metadata={"workspace": self.config.workspace_path.name, "agent_id": agent.agent_id, "server_name": server_name},
-                    auth=auth_payload,
-                )
-                credential = ProviderStateRecord(
-                    provider="claude_managed_agents",
-                    resource_type="vault_credential",
-                    logical_key=credential_key,
-                    external_id=credential_id,
-                    metadata={"vault_id": vault.external_id, "server_name": server_name},
-                    created_at=utc_now(),
-                    updated_at=utc_now(),
-                )
-                self.repository.upsert(credential)
-        return [vault.external_id]
+            if credential and not verify_remote:
+                continue
+            if credential and verify_remote and await self.client.vault_credential_exists(vault_id, credential.external_id):
+                continue
+            credential_id = await self.client.create_or_update_vault_credential(
+                vault_id=vault_id,
+                display_name=f"{agent.display_name or agent.agent_id} {server_name} Credential",
+                metadata={"workspace": self.config.workspace_path.name, "agent_id": agent.agent_id, "server_name": server_name},
+                auth=auth_payload,
+            )
+            credential = ProviderStateRecord(
+                provider="claude_managed_agents",
+                resource_type="vault_credential",
+                logical_key=credential_key,
+                external_id=credential_id,
+                metadata={"vault_id": vault_id, "server_name": server_name},
+                created_at=credential.created_at if credential else utc_now(),
+                updated_at=utc_now(),
+            )
+            self.repository.upsert(credential)
+        return [vault_id]
 
-    async def ensure_all_agent_vaults(self) -> None:
+    async def ensure_all_agent_vaults(self, *, verify_remote: bool = False) -> None:
         for agent_id, agent in self.config.agents.items():
             if not agent.enabled:
                 continue
-            await self.ensure_agent_vaults(agent_id)
+            await self.ensure_agent_vaults(agent_id, verify_remote=verify_remote)
+
+    async def _verify_cached_core_resources(self, environment_id: str, memory_store_id: str) -> tuple[bool, bool]:
+        return (
+            await self.client.environment_exists(environment_id),
+            await self.client.memory_store_exists(memory_store_id),
+        )
+
+    def resolve_agent_provider_id(self, agent_id: str) -> str:
+        if self.config.settings.thruflow_fake_claude:
+            return agent_id
+        record = self.repository.get("claude_managed_agents", "agent", agent_id)
+        if not record:
+            raise RuntimeError(
+                f"Agent '{agent_id}' has not been deployed yet. Run the managed-agent deploy step so "
+                "ThruFlow can persist the provider agent ID before starting live sessions."
+            )
+        return record.external_id
 
     def _environment_name(self) -> str:
         return f"thruflow-{self.config.workspace_path.name}-environment"

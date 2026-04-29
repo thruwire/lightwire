@@ -1,3 +1,8 @@
+---
+name: structured-notes
+description: Use when the task requires structured synthesis, concise handoffs, or easy-to-scan outputs for downstream agents.
+---
+
 Use this skill when the task requires structured synthesis or handoffs.
 
 Requirements:

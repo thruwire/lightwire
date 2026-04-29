@@ -3,6 +3,7 @@ enabled: true
 display_name: Analyst
 description: Evaluates findings, tradeoffs, and risks.
 provider: claude_managed_agents
+model: claude-sonnet-4-6
 
 memory:
   access: read_write

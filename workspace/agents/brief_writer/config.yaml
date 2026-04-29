@@ -3,6 +3,7 @@ enabled: true
 display_name: Brief Writer
 description: Produces concise executive briefs from upstream analysis.
 provider: claude_managed_agents
+model: claude-sonnet-4-6
 
 memory:
   access: read_write

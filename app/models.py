@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class MessageSource(str, Enum):
@@ -158,8 +158,21 @@ class HeartbeatsFile(BaseModel):
 
 
 class SlackChannelConfig(BaseModel):
-    channel_id: str
+    channel_id: str | None = None
+    channel_name: str | None = None
     include_threads: bool = True
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "SlackChannelConfig":
+        if self.channel_id or self.channel_name:
+            return self
+        raise ValueError("Slack channel config requires either channel_id or channel_name.")
+
+
+class SlackBehaviorConfig(BaseModel):
+    requires_mention: bool = True
+    allow_dms: bool = True
+    prefixes: list[str] = Field(default_factory=list)
 
 
 class SlackMode(str, Enum):
@@ -184,6 +197,7 @@ class SlackConfig(BaseModel):
     socket: SlackSocketConfig = Field(default_factory=SlackSocketConfig)
     polling: SlackPollingConfig = Field(default_factory=SlackPollingConfig)
     channels: list[SlackChannelConfig] = Field(default_factory=list)
+    behavior: SlackBehaviorConfig = Field(default_factory=SlackBehaviorConfig)
     ignore_bot_messages: bool = True
     send_replies: bool = True
 

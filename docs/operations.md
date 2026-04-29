@@ -4,10 +4,13 @@
 
 1. Copy `.env.example` to `.env`.
 2. Set `ANTHROPIC_API_KEY` if you want live provider calls.
-3. Set connector tokens such as `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want polling enabled.
-4. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
-5. Install dependencies with `pip install -e .[dev]`.
-6. Start the API with `uvicorn app.main:app --reload`.
+3. Install the Anthropic `ant` CLI and ensure it is on `PATH`, or set `ANT_BIN` to its location. Current `ant` releases may require a newer Go toolchain when installing from source.
+4. Use `THRUFLOW_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
+5. Leave `ANTHROPIC_BASE_URL` at the public default only if the provider environment you are using exposes the managed-agent APIs ThruFlow needs at runtime.
+6. Set connector tokens such as `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want polling or Socket Mode enabled.
+7. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
+8. Install dependencies with `pip install -e .[dev]`.
+9. Start the API with `uvicorn app.main:app --reload`.
 
 ## Docker
 
@@ -22,6 +25,7 @@ The compose setup:
 - mounts `./workspace` into `/app/workspace` as read-only
 - persists SQLite under `/app/data`
 - sets `WORKSPACE_PATH=/app/workspace`
+- includes the Anthropic `ant` CLI inside the image so containerized provisioning does not depend on a host installation
 
 ## Startup Behavior
 
@@ -82,4 +86,5 @@ Common checks:
 - inspect `workspace/routes.yaml` when messages are not creating sessions
 - inspect `connector_cursors` when a connector appears stuck
 - inspect `provider_state` when provider resources are unexpectedly recreated
-- run with `THRUFLOW_FAKE_CLAUDE=true` to isolate orchestration from live provider behavior
+- run with `THRUFLOW_FAKE_CLAUDE=true` only when you intentionally want mock provider behavior
+- if provisioning fails because `ant` is missing, install the Anthropic CLI or set `ANT_BIN`

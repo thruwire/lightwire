@@ -7,6 +7,8 @@ This page documents every workspace YAML file and the main environment variables
 `.env.example` shows the current env surface:
 
 - `ANTHROPIC_API_KEY`: provider API key for live Claude calls
+- `ANTHROPIC_BASE_URL`: provider API base URL, defaults to `https://api.anthropic.com/v1`
+- `ANT_BIN`: Anthropic CLI binary path, defaults to `ant`
 - `SLACK_BOT_TOKEN`: Slack bot token for Socket Mode, replies, and polling fallback
 - `SLACK_APP_TOKEN`: Slack Socket Mode app-level token
 - `TELEGRAM_BOT_TOKEN`: Telegram Bot API token
@@ -153,6 +155,18 @@ Shape:
 enabled: true
 mode: socket
 
+channels:
+  - channel_id: C123456
+    include_threads: true
+  - channel_name: ai-playground
+    include_threads: true
+
+behavior:
+  requires_mention: true
+  allow_dms: true
+  prefixes:
+    - "!tf"
+
 socket:
   reconnect: true
   ack_timeout_seconds: 3
@@ -161,9 +175,6 @@ polling:
   enabled: false
   poll_interval_seconds: 30
 
-channels:
-  - channel_id: C123456
-    include_threads: true
 ignore_bot_messages: true
 send_replies: true
 ```
@@ -172,9 +183,10 @@ Fields:
 
 - `enabled`
 - `mode`: `socket`, `polling`, or `webhook`
+- `channels`
+- `behavior`
 - `socket`
 - `polling`
-- `channels`
 - `ignore_bot_messages`
 - `send_replies`
 
@@ -183,6 +195,10 @@ Notes:
 - If `mode` is missing, it defaults to `socket`.
 - `webhook` is reserved for future use and is not implemented in this repo yet.
 - Polling is fallback-only and should not be run as the primary real-time ingestion path.
+- Channel entries may specify `channel_id` or `channel_name`. Names are resolved to IDs at startup, then normalized to `channel_id` in memory.
+- Channel names are cached in `/app/data/slack_channels.json` in containerized deployments because `SQLITE_PATH` defaults under `/app/data`.
+- DMs are controlled separately by `behavior.allow_dms`.
+- Channel messages only trigger when explicitly addressed by mention or configured prefix.
 
 `socket` fields:
 
@@ -197,7 +213,14 @@ Notes:
 Channel fields:
 
 - `channel_id`
+- `channel_name`
 - `include_threads`
+
+Behavior fields:
+
+- `requires_mention`
+- `allow_dms`
+- `prefixes`
 
 ## `workspace/telegram.yaml`
 
@@ -287,29 +310,35 @@ Required convention:
 - allow natural language output
 - do not require JSON output
 
-## `workspace/skills/<skill_id>/config.yaml`
-
-Purpose:
-- declare skill metadata
-
-Shape:
-
-```yaml
-skill_id: structured_notes
-enabled: true
-description: Produces concise structured notes and handoffs.
-```
-
-Fields:
-
-- `skill_id`
-- `enabled`
-- `description`
-
 ## `workspace/skills/<skill_id>/SKILL.md`
 
 Purpose:
 - provide reusable instruction text appended to agent instructions when enabled
+- define skill identity and trigger metadata in YAML frontmatter
+
+Shape:
+
+```md
+---
+name: structured-notes
+description: Use when the task requires structured synthesis, concise handoffs, or easy-to-scan outputs for downstream agents.
+---
+
+Use this skill when the task requires structured synthesis or handoffs.
+```
+
+Required frontmatter fields:
+
+- `name`
+- `description`
+
+Expected behavior:
+
+- `name` should be lowercase and hyphenated in the file
+- ThruFlow converts that name into its internal skill key by replacing `-` with `_`
+- `description` should describe both what the skill does and when it should be used
+
+The Markdown body below the frontmatter is the reusable execution guidance appended to agent instructions.
 
 ## `workspace/prompt_templates/*.md`
 

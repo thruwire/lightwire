@@ -27,7 +27,6 @@ workspace/
       AGENT.md
   skills/
     <skill_id>/
-      config.yaml
       SKILL.md
   prompt_templates/
     <template_id>.md
@@ -39,12 +38,13 @@ workspace/
 ```
 
 - `workspace/agents/*/AGENT.md` holds stable provider-neutral agent instructions.
+- `workspace/agents/*/config.yaml` owns per-agent runtime settings such as provider, model, memory access, skills, and tool activation.
 - `workspace/skills/*/SKILL.md` holds reusable skill instructions.
 - `workspace/prompt_templates/*.md` holds route-specific task prompts rendered with Jinja-style variables.
 - `workspace/tools.yaml` is the shared tool registry for built-in tools and remote MCP servers.
 - `workspace/routes.yaml` wires messages to agents and prompt templates.
 - `workspace/heartbeats.yaml` defines scheduled routable prompts.
-- `workspace/slack.yaml` defines Slack polling behavior.
+- `workspace/slack.yaml` defines Slack Socket Mode behavior, channel allowlists, and explicit-address rules.
 - `workspace/telegram.yaml` defines Telegram polling, chat allowlists, and optional final replies.
 
 Memory is provider-managed, mounted into sessions at runtime, and not stored in git.
@@ -105,12 +105,13 @@ Agents do not need to return JSON.
 1. Copy `.env.example` to `.env`.
 2. Set `WORKSPACE_PATH` if you want a workspace other than `./workspace`.
 3. Set `ANTHROPIC_API_KEY` for live provider calls.
-4. Set `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want connector polling enabled.
-5. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
-6. Install dependencies with `pip install -e .[dev]`.
-7. Start the API with `uvicorn app.main:app --reload`.
-
-`THRUFLOW_FAKE_CLAUDE=true` keeps the demo runnable without external API calls. Set it to `false` for live managed-agent execution.
+4. Install the Anthropic `ant` CLI if you want live managed-agent provisioning and deploys.
+5. Use `THRUFLOW_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
+6. If your provider environment exposes managed-agent APIs at a different base URL, set `ANTHROPIC_BASE_URL` accordingly.
+7. Set `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want connector ingestion enabled.
+8. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
+9. Install dependencies with `pip install -e .[dev]`.
+10. Start the API with `uvicorn app.main:app --reload`.
 
 ## Docker Setup
 
@@ -121,6 +122,8 @@ docker compose up --build
 ```
 
 The compose file mounts `./workspace` into `/app/workspace` as read-only and persists SQLite separately under `/app/data`.
+
+The published image and local Docker build include the Anthropic `ant` CLI so containerized deploy and runtime workflows can provision managed-agent resources without requiring `ant` on the host machine.
 
 Operational details and troubleshooting live in [docs/operations.md](./docs/operations.md).
 
@@ -198,21 +201,41 @@ Slack app setup:
 2. Enable Socket Mode.
 3. Create an app-level token with `connections:write`.
 4. Add bot token scopes:
+   - `app_mentions:read`
+   - `im:history`
    - `channels:history`
    - `channels:read`
    - `chat:write`
    - `groups:history` if private channels are used
    - `groups:read` if private channels are used
 5. Subscribe to bot events:
+   - `app_mention`
+   - `message.im`
    - `message.channels`
    - optionally `message.groups`
-   - optionally `message.im`
    - optionally `message.mpim`
 6. Install the app to the workspace.
 7. Add the tokens to `.env`.
 8. Configure `workspace/slack.yaml`.
+9. Ensure the bot is a member of any configured channels.
 
 In Socket Mode, ThruFlow acknowledges Slack envelopes quickly, normalizes supported message events, and routes them through the same dispatcher used by API, Telegram, heartbeats, and agent outputs.
+
+Slack config supports multiple channels and accepts either `channel_id` or `channel_name`. Channel names are resolved to IDs at connector startup and stored internally as channel IDs. By default, messages in channels only trigger when the bot is explicitly addressed with a mention, though you can also configure accepted prefixes. DMs are supported separately through `behavior.allow_dms`.
+
+Example:
+
+```yaml
+channels:
+  - channel_name: "ai-playground"
+  - channel_id: "C123456"
+
+behavior:
+  requires_mention: true
+  allow_dms: true
+  prefixes:
+    - "!tf"
+```
 
 Polling remains available as fallback or backfill only and is not recommended as the primary real-time ingestion path.
 
@@ -228,7 +251,7 @@ Connector behavior and extension guidance are documented in [docs/connectors.md]
 
 ## GitHub Actions Deployment
 
-The repository includes an example workflow at [.github/workflow-examples/deploy-managed-agents.yml.example](./.github/workflow-examples/deploy-managed-agents.yml.example). It shows how to run `python scripts/deploy_managed_agents.py` from GitHub Actions after checking out the repo and setting `ANTHROPIC_API_KEY`.
+The repository includes an example workflow at [.github/workflow-examples/deploy-managed-agents.yml.example](./.github/workflow-examples/deploy-managed-agents.yml.example). It shows how to install the Anthropic `ant` CLI and then run `python scripts/deploy_managed_agents.py` from GitHub Actions.
 
 ## Demo Walkthrough
 

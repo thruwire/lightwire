@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import shutil
 from typing import Any
-
-import httpx
 
 from app.config import RuntimeConfig
 from app.memory.path_extractor import extract_memory_paths
@@ -15,31 +16,53 @@ class ClaudeManagedAgentClient:
         self.config = config
 
     async def deploy_agent(self, agent: AgentConfig, system_prompt: str) -> dict[str, Any]:
-        # Deployment compiles provider-neutral workspace config into Claude-specific agent payloads.
-        payload = {
-            "name": agent.display_name or agent.agent_id,
-            "description": agent.description,
-            "model": {"id": agent.model},
-            "system": system_prompt,
-            "metadata": {"agent_id": agent.agent_id, "skills": agent.skills},
-            "mcp_servers": self._build_mcp_servers(agent),
-            "tools": self._build_tools(agent),
-        }
+        payload = self._build_agent_payload(agent, system_prompt)
         if self.config.settings.thruflow_fake_claude:
             return {
-                "agent_id": agent.agent_id,
+                "id": agent.agent_id,
+                "name": agent.display_name or agent.agent_id,
                 "provider": agent.provider,
                 "status": "mocked",
-                "prompt_length": len(system_prompt),
+                "version": 1,
                 "tools": payload["tools"],
                 "mcp_servers": payload["mcp_servers"],
             }
 
-        return await self._post("/managed-agents/agents", payload)
+        await self._require_ant()
+        existing = await self._find_named_resource(
+            ["beta:agents", "list", "--limit", "100", "--format", "json"],
+            metadata_slug=agent.agent_id,
+            name=agent.display_name or agent.agent_id,
+            archive_duplicates=("beta:agents", "--agent-id"),
+        )
+        if existing is None:
+            return await self._run_ant_json(["beta:agents", "create", "--format", "json"], payload)
+        agent_id = self._extract_id(existing)
+        update_payload = dict(payload)
+        if "version" in existing:
+            update_payload["version"] = existing["version"]
+        return await self._run_ant_json(
+            ["beta:agents", "update", "--agent-id", agent_id, "--format", "json"],
+            update_payload,
+        )
 
     async def create_or_update_agent(self, agent_id: str) -> dict[str, Any]:
         agent = self.config.get_agent(agent_id)
         return await self.deploy_agent(agent, self.config.get_agent_system_prompt(agent_id))
+
+    async def environment_exists(self, environment_id: str) -> bool:
+        return await self._resource_exists(["beta:environments", "retrieve", "--environment-id", environment_id, "--format", "json"])
+
+    async def memory_store_exists(self, memory_store_id: str) -> bool:
+        return await self._resource_exists(["beta:memory-stores", "retrieve", "--memory-store-id", memory_store_id, "--format", "json"])
+
+    async def vault_exists(self, vault_id: str) -> bool:
+        return await self._resource_exists(["beta:vaults", "retrieve", "--vault-id", vault_id, "--format", "json"])
+
+    async def vault_credential_exists(self, vault_id: str, credential_id: str) -> bool:
+        return await self._resource_exists(
+            ["beta:vaults:credentials", "retrieve", "--vault-id", vault_id, "--credential-id", credential_id, "--format", "json"]
+        )
 
     async def create_session(self, request: ClaudeSessionRequest) -> ClaudeSessionResult:
         if self.config.settings.thruflow_fake_claude:
@@ -51,68 +74,134 @@ class ClaudeManagedAgentClient:
                 raw={"mode": "mock", "vault_ids": request.vault_ids},
             )
 
-        payload = {
-            "agent_id": request.agent_id,
-            "system_prompt": request.system_prompt,
-            "input": request.task_prompt,
+        await self._require_ant()
+        session_payload = {
+            "agent": request.agent_id,
             "environment_id": self.config.get_provider_environment_id(),
             "vault_ids": request.vault_ids,
-            "attachments": [
+            "metadata": request.metadata | {"correlation_id": request.correlation_id, "agent_id": request.agent_id},
+            "resources": [
                 {
                     "type": "memory_store",
                     "memory_store_id": request.memory_store_id,
                     "access": request.memory_access,
                 }
             ],
-            # Session metadata mirrors ThruFlow correlation state so provider logs can be traced back locally.
-            "metadata": request.metadata | {"correlation_id": request.correlation_id, "agent_id": request.agent_id},
         }
-        data = await self._post("/managed-agents/sessions", payload)
+        session = await self._run_ant_json(["beta:sessions", "create", "--format", "json"], session_payload)
+        session_id = str(session["id"])
+        await self._run_ant_json(
+            ["beta:sessions:events", "send", "--session-id", session_id, "--format", "json"],
+            {
+                "event": [
+                    {
+                        "type": "user.message",
+                        "content": [{"type": "text", "text": request.task_prompt}],
+                    }
+                ]
+            },
+        )
+        content, status, events_payload = await self._wait_for_session_output(session_id)
         return ClaudeSessionResult(
-            external_session_id=str(data["id"]),
-            status=SessionStatus(str(data.get("status", SessionStatus.COMPLETED.value))),
-            content=str(data.get("output_text", "")),
+            external_session_id=session_id,
+            status=status,
+            content=content,
             attached_memory_store_id=request.memory_store_id,
-            raw=data,
+            raw={"session": session, "events": events_payload},
         )
 
     async def create_environment(self, name: str) -> str:
         if self.config.settings.thruflow_fake_claude:
             return new_id("claude_env")
-
-        data = await self._post(
-            "/managed-agents/environments",
-            {
-                "name": name,
-                "metadata": {"workspace": self.config.workspace_path.name},
-                "config": {
-                    "type": "cloud",
-                    "networking": {
-                        "type": "limited",
-                        "allow_mcp_servers": True,
-                        "allow_package_managers": True,
-                        "allowed_hosts": ["https://api.anthropic.com"],
-                    },
+        await self._require_ant()
+        payload = {
+            "name": name,
+            "metadata": {
+                "managed_agents_repo": "thruflow",
+                "managed_agents_kind": "environment",
+                "managed_agents_slug": "default",
+                "workspace": self.config.workspace_path.name,
+            },
+            "config": {
+                "type": "cloud",
+                "networking": {
+                    "type": "limited",
+                    "allow_mcp_servers": True,
+                    "allow_package_managers": True,
+                    "allowed_hosts": ["api.anthropic.com"],
                 },
             },
+        }
+        existing = await self._find_named_resource(
+            ["beta:environments", "list", "--limit", "100", "--format", "json"],
+            metadata_slug="default",
+            name=name,
+            archive_duplicates=("beta:environments", "--environment-id"),
         )
+        if existing is None:
+            data = await self._run_ant_json(["beta:environments", "create", "--format", "json"], payload)
+        else:
+            data = await self._run_ant_json(
+                ["beta:environments", "update", "--environment-id", self._extract_id(existing), "--format", "json"],
+                payload,
+            )
         return str(data["id"])
 
     async def create_memory_store(self, name: str) -> str:
         if self.config.settings.thruflow_fake_claude:
             return new_id("memory_store")
-
-        data = await self._post(
-            "/memory-stores",
-            {"name": name, "metadata": {"workspace": self.config.workspace_path.name}},
+        await self._require_ant()
+        payload = {
+            "name": name,
+            "description": f"Shared ThruFlow memory for workspace {self.config.workspace_path.name}.",
+            "metadata": {
+                "managed_agents_repo": "thruflow",
+                "managed_agents_kind": "memory_store",
+                "managed_agents_slug": "shared",
+                "workspace": self.config.workspace_path.name,
+            },
+        }
+        existing = await self._find_named_resource(
+            ["beta:memory-stores", "list", "--limit", "100", "--format", "json"],
+            metadata_slug="shared",
+            name=name,
+            archive_duplicates=("beta:memory-stores", "--memory-store-id"),
         )
+        if existing is None:
+            data = await self._run_ant_json(["beta:memory-stores", "create", "--format", "json"], payload)
+        else:
+            data = await self._run_ant_json(
+                ["beta:memory-stores", "update", "--memory-store-id", self._extract_id(existing), "--format", "json"],
+                payload,
+            )
         return str(data["id"])
 
     async def create_vault(self, display_name: str, metadata: dict[str, Any]) -> str:
         if self.config.settings.thruflow_fake_claude:
             return new_id("vault")
-
-        data = await self._post("/managed-agents/vaults", {"display_name": display_name, "metadata": metadata})
+        await self._require_ant()
+        payload = {
+            "display_name": display_name,
+            "metadata": metadata
+            | {
+                "managed_agents_repo": "thruflow",
+                "managed_agents_kind": "vault",
+                "managed_agents_slug": metadata.get("agent_id", display_name),
+            },
+        }
+        existing = await self._find_named_resource(
+            ["beta:vaults", "list", "--limit", "100", "--format", "json"],
+            metadata_slug=metadata.get("agent_id", display_name),
+            name=display_name,
+            archive_duplicates=("beta:vaults", "--vault-id"),
+        )
+        if existing is None:
+            data = await self._run_ant_json(["beta:vaults", "create", "--format", "json"], payload)
+        else:
+            data = await self._run_ant_json(
+                ["beta:vaults", "update", "--vault-id", self._extract_id(existing), "--format", "json"],
+                payload,
+            )
         return str(data["id"])
 
     async def create_or_update_vault_credential(
@@ -124,23 +213,246 @@ class ClaudeManagedAgentClient:
     ) -> str:
         if self.config.settings.thruflow_fake_claude:
             return new_id("credential")
-
-        data = await self._post(
-            f"/managed-agents/vaults/{vault_id}/credentials",
-            {"display_name": display_name, "metadata": metadata, "auth": auth},
+        await self._require_ant()
+        existing = await self._find_named_resource(
+            ["beta:vaults:credentials", "list", "--vault-id", vault_id, "--limit", "100", "--format", "json"],
+            metadata_slug=f"{metadata.get('agent_id', display_name)}:{metadata.get('server_name', display_name)}",
+            name=display_name,
+            archive_duplicates=("beta:vaults:credentials", "--credential-id", ["--vault-id", vault_id]),
         )
+        payload = {
+            "display_name": display_name,
+            "metadata": metadata
+            | {
+                "managed_agents_repo": "thruflow",
+                "managed_agents_kind": "vault_credential",
+                "managed_agents_slug": f"{metadata.get('agent_id', display_name)}:{metadata.get('server_name', display_name)}",
+            },
+            "auth": auth,
+        }
+        if existing is None:
+            data = await self._run_ant_json(
+                ["beta:vaults:credentials", "create", "--vault-id", vault_id, "--format", "json"],
+                payload,
+            )
+        else:
+            credential_id = self._extract_id(existing)
+            data = await self._run_ant_json(
+                [
+                    "beta:vaults:credentials",
+                    "update",
+                    "--vault-id",
+                    vault_id,
+                    "--credential-id",
+                    credential_id,
+                    "--format",
+                    "json",
+                ],
+                payload,
+            )
         return str(data["id"])
 
-    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        headers = {
-            "x-api-key": self.config.settings.anthropic_api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
+    def _build_agent_payload(self, agent: AgentConfig, system_prompt: str) -> dict[str, Any]:
+        return {
+            "name": agent.display_name or agent.agent_id,
+            "description": agent.description,
+            "model": {"id": agent.model},
+            "system": system_prompt,
+            "metadata": {
+                "managed_agents_repo": "thruflow",
+                "managed_agents_kind": "agent",
+                "managed_agents_slug": agent.agent_id,
+                "agent_id": agent.agent_id,
+            },
+            "mcp_servers": self._build_mcp_servers(agent),
+            "tools": self._build_tools(agent),
         }
-        async with httpx.AsyncClient(base_url=self.config.settings.anthropic_base_url, timeout=60.0) as client:
-            response = await client.post(path, json=payload, headers=headers)
-            response.raise_for_status()
-            return response.json()
+
+    async def _wait_for_session_output(self, session_id: str, timeout_seconds: int = 120) -> tuple[str, SessionStatus, dict[str, Any]]:
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        last_events: dict[str, Any] = {}
+        while asyncio.get_running_loop().time() < deadline:
+            session = await self._run_ant_json(["beta:sessions", "retrieve", "--session-id", session_id, "--format", "json"])
+            last_events = await self._run_ant_json(
+                ["beta:sessions:events", "list", "--session-id", session_id, "--order", "asc", "--limit", "200", "--format", "json"]
+            )
+            content = self._extract_agent_message_text(last_events)
+            status = SessionStatus.COMPLETED if session.get("status") in {"idle", "terminated"} else SessionStatus.RUNNING
+            if status == SessionStatus.COMPLETED:
+                return content, status, last_events
+            await asyncio.sleep(1)
+        raise RuntimeError(f"Timed out waiting for managed-agent session '{session_id}' to complete.")
+
+    def _extract_agent_message_text(self, events_payload: dict[str, Any]) -> str:
+        texts: list[str] = []
+        for event in self._list_items(events_payload):
+            if event.get("type") != "agent.message":
+                continue
+            for block in event.get("content", []) or []:
+                if block.get("type") == "text" and block.get("text"):
+                    texts.append(str(block["text"]))
+        return "\n".join(texts).strip()
+
+    async def _find_named_resource(
+        self,
+        command: list[str],
+        *,
+        metadata_slug: str,
+        name: str,
+        metadata_key: str = "managed_agents_slug",
+        archive_duplicates: tuple[str, str] | tuple[str, str, list[str]] | None = None,
+    ) -> dict[str, Any] | None:
+        payload = await self._run_ant_json(command)
+        matches = self._match_named_resources(payload, metadata_slug=metadata_slug, name=name, metadata_key=metadata_key)
+        if not matches:
+            return None
+        matches.sort(key=self._resource_sort_key, reverse=True)
+        canonical = matches[0]
+        if archive_duplicates and len(matches) > 1:
+            extra_args: list[str] = []
+            if len(archive_duplicates) == 3:
+                extra_args = archive_duplicates[2]
+            await self._archive_duplicate_resources(
+                archive_command=archive_duplicates[0],
+                id_flag=archive_duplicates[1],
+                keep_id=self._extract_id(canonical),
+                matches=matches[1:],
+                extra_args=extra_args,
+            )
+        return canonical
+
+    def _match_named_resources(
+        self,
+        payload: Any,
+        *,
+        metadata_slug: str,
+        name: str,
+        metadata_key: str = "managed_agents_slug",
+    ) -> list[dict[str, Any]]:
+        matches: list[dict[str, Any]] = []
+        for item in self._list_items(payload):
+            metadata = item.get("metadata") or {}
+            same_repo = metadata.get("managed_agents_repo") == "thruflow"
+            same_slug = metadata.get(metadata_key) == metadata_slug
+            same_name = item.get("name") == name or item.get("display_name") == name
+            if (same_repo and same_slug) or same_name:
+                matches.append(item)
+        return matches
+
+    async def _archive_duplicate_resources(
+        self,
+        *,
+        archive_command: str,
+        id_flag: str,
+        keep_id: str,
+        matches: list[dict[str, Any]],
+        extra_args: list[str] | None = None,
+    ) -> None:
+        for item in matches:
+            duplicate_id = self._extract_id(item)
+            if duplicate_id == keep_id:
+                continue
+            await self._run_ant_json(
+                [archive_command, "archive", *(extra_args or []), id_flag, duplicate_id, "--format", "json"]
+            )
+
+    def _resource_sort_key(self, item: dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            str(item.get("updated_at") or ""),
+            str(item.get("created_at") or ""),
+            str(item.get("id") or ""),
+        )
+
+    def _list_items(self, payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            for key in ("data", "items", "results"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+        return []
+
+    def _extract_id(self, payload: dict[str, Any]) -> str:
+        for key in ("id", "agent_id", "environment_id", "vault_id", "credential_id", "memory_store_id"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+        raise RuntimeError(f"Could not resolve resource ID from payload: {json.dumps(payload)}")
+
+    async def _require_ant(self) -> None:
+        if shutil.which(self.config.settings.ant_bin):
+            return
+        raise RuntimeError(
+            f"Anthropic CLI binary '{self.config.settings.ant_bin}' was not found. Install the `ant` CLI and/or "
+            "set ANT_BIN to its path before running live managed-agent provisioning."
+        )
+
+    async def _resource_exists(self, args: list[str]) -> bool:
+        if self.config.settings.thruflow_fake_claude:
+            return True
+        await self._require_ant()
+        try:
+            await self._run_ant_json(args)
+        except RuntimeError:
+            return False
+        return True
+
+    async def _run_ant_json(self, args: list[str], payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        process = await asyncio.create_subprocess_exec(
+            self.config.settings.ant_bin,
+            *args,
+            stdin=asyncio.subprocess.PIPE if payload is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdin_bytes = json.dumps(payload).encode("utf-8") if payload is not None else None
+        stdout, stderr = await process.communicate(stdin_bytes)
+        if process.returncode != 0:
+            payload_text = json.dumps(payload, indent=2, sort_keys=True) if payload is not None else ""
+            raise RuntimeError(
+                f"Anthropic CLI command failed: {self.config.settings.ant_bin} {' '.join(args)}\n"
+                f"{stderr.decode().strip()}\n"
+                f"{'Payload:\n' + payload_text if payload_text else ''}"
+            )
+        output = stdout.decode().strip()
+        if not output:
+            return {}
+        return self._parse_ant_json_output(output, args)
+
+    def _parse_ant_json_output(self, output: str, args: list[str]) -> dict[str, Any]:
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            pass
+
+        decoder = json.JSONDecoder()
+        parsed_values: list[Any] = []
+        index = 0
+
+        while index < len(output):
+            next_start = -1
+            for candidate in range(index, len(output)):
+                if output[candidate] in "[{":
+                    next_start = candidate
+                    break
+            if next_start < 0:
+                break
+            try:
+                value, next_index = decoder.raw_decode(output, next_start)
+            except json.JSONDecodeError:
+                index = next_start + 1
+                continue
+            parsed_values.append(value)
+            index = next_index
+
+        if parsed_values and isinstance(parsed_values[-1], dict):
+            return parsed_values[-1]
+
+        raise RuntimeError(
+            f"Anthropic CLI command produced non-JSON or multi-part output that could not be resolved to a final object: "
+            f"{self.config.settings.ant_bin} {' '.join(args)}\n{output}"
+        )
 
     def _build_mcp_servers(self, agent: AgentConfig) -> list[dict[str, Any]]:
         servers: list[dict[str, Any]] = []
@@ -148,7 +460,6 @@ class ClaudeManagedAgentClient:
             server = self.config.tools.mcp_servers.get(server_name)
             if not server or not server.enabled:
                 continue
-            # Workspace tool config defines the connection details; agent config only chooses which servers to activate.
             servers.append({"name": server_name, "type": server.type, "url": server.url})
         return servers
 
@@ -174,7 +485,6 @@ class ClaudeManagedAgentClient:
             server = self.config.tools.mcp_servers.get(server_name)
             if not server or not server.enabled:
                 continue
-            # MCP toolsets default closed and then opt specific tools in, which keeps agent permissions narrow.
             tools.append(
                 {
                     "type": "mcp_toolset",
@@ -199,7 +509,7 @@ class ClaudeManagedAgentClient:
         handoff_candidates = [path for path in mentioned_paths if "/handoffs/" in path]
         artifact_path = artifact_candidates[-1] if artifact_candidates else request.memory_store_id
         handoff_path = handoff_candidates[-1] if handoff_candidates else None
-        if request.agent_id == "researcher":
+        if "research" in text.lower() and "analysis" not in text.lower():
             response = (
                 "Research complete. I reviewed the topic, noted the main benefits and risks, "
                 f"and wrote the research artifact to {artifact_path}."
@@ -207,7 +517,7 @@ class ClaudeManagedAgentClient:
             if handoff_path:
                 response += f" I also wrote a concise handoff note to {handoff_path}."
             return response
-        if request.agent_id == "analyst":
+        if "/artifacts/analysis/" in text:
             response = (
                 "Analysis complete. I evaluated the tradeoffs, uncertainty, and operational risks, "
                 f"and wrote the analysis artifact to {artifact_path}."
@@ -215,7 +525,7 @@ class ClaudeManagedAgentClient:
             if handoff_path:
                 response += f" I also wrote a handoff note to {handoff_path}."
             return response
-        if request.agent_id == "brief_writer":
+        if "/artifacts/briefs/" in text:
             response = (
                 "Executive brief complete. I wrote the final brief to "
                 f"{artifact_path} with the main recommendation and open questions."

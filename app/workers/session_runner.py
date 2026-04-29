@@ -37,6 +37,7 @@ class SessionRunner:
         _, memory_store_id = await self.resources.ensure()
         # Vault lookup is per agent because tool auth is activated per agent, not per route.
         vault_ids = await self.resources.ensure_agent_vaults(dispatch.agent_id)
+        provider_agent_id = self.resources.resolve_agent_provider_id(dispatch.agent_id)
         agent = self.config.get_agent(dispatch.agent_id)
         now = utc_now()
         session = SessionRecord(
@@ -55,7 +56,7 @@ class SessionRunner:
         )
         self.sessions.create(session)
         request = ClaudeSessionRequest(
-            agent_id=agent.agent_id,
+            agent_id=provider_agent_id,
             system_prompt=self.config.get_agent_system_prompt(agent.agent_id),
             task_prompt=dispatch.prompt,
             memory_store_id=memory_store_id,

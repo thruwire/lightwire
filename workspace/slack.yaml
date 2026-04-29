@@ -1,6 +1,17 @@
 enabled: true
 mode: socket
 
+channels:
+  - channel_id: "C123456"
+    include_threads: true
+  - channel_name: "ai-playground"
+    include_threads: true
+
+behavior:
+  requires_mention: true
+  allow_dms: true
+  prefixes: []
+
 socket:
   reconnect: true
   ack_timeout_seconds: 3
@@ -9,8 +20,5 @@ polling:
   enabled: false
   poll_interval_seconds: 30
 
-channels:
-  - channel_id: "C123456"
-    include_threads: true
 ignore_bot_messages: true
 send_replies: true

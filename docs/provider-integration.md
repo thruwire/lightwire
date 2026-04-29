@@ -2,6 +2,8 @@
 
 ThruFlow currently targets Claude Managed Agents through the adapter in `app/claude/`.
 
+Managed-agent provisioning in this repo uses the Anthropic `ant` CLI. ThruFlow uses `ant` to create or update environments, memory stores, vaults, credentials, and agent definitions, then persists the resulting provider IDs in SQLite for later reuse.
+
 ## Provider Resource Ownership
 
 ThruFlow manages provider resource IDs itself instead of requiring them in `.env`.
@@ -22,6 +24,18 @@ Current managed resources:
 - vault credentials for authenticated MCP servers
 
 These IDs are stored in the `provider_state` table.
+
+## Endpoint Availability
+
+Provisioning no longer assumes undocumented direct REST paths for environments or vaults. Instead, ThruFlow relies on the Anthropic CLI surface for those resources.
+
+For live operation you still need:
+
+- `ANTHROPIC_API_KEY`
+- the `ant` CLI on `PATH`, or `ANT_BIN` pointing to it
+- a provider environment where managed-agent sessions are available
+
+If you want fully mocked behavior for tests or demos, set `THRUFLOW_FAKE_CLAUDE=true` explicitly.
 
 ## Session Construction
 
@@ -73,7 +87,7 @@ The repo reads secret values from environment variables, creates or reuses provi
 
 ## Fake Mode
 
-`THRUFLOW_FAKE_CLAUDE=true` keeps local development and CI runnable without live provider calls.
+`THRUFLOW_FAKE_CLAUDE=true` is available as an explicit testing and demo switch when you do not want live provider calls.
 
 In fake mode:
 

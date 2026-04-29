@@ -135,7 +135,9 @@ def test_telegram_send_message_uses_bot_api_endpoint(tmp_path) -> None:
 
 
 def test_final_output_reply_flow_uses_telegram_connector(tmp_path) -> None:
-    state = build_state(Settings(sqlite_path=str(tmp_path / "flow.db"), workspace_path="workspace"))
+    state = build_state(
+        Settings(sqlite_path=str(tmp_path / "flow.db"), workspace_path="workspace", thruflow_fake_claude=True)
+    )
     sent_messages: list[dict[str, object]] = []
 
     class FakeTelegramConnector:

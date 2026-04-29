@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -14,12 +17,15 @@ from app.utils.ids import new_id
 from app.utils.time import utc_now
 
 try:
-    from slack_sdk.socket_mode.aiohttp import SocketModeClient
-    from slack_sdk.socket_mode.request import SocketModeRequest
-    from slack_sdk.socket_mode.response import SocketModeResponse
     from slack_sdk.web.async_client import AsyncWebClient
 except ImportError:  # pragma: no cover - exercised through injected fakes in tests.
     AsyncWebClient = None
+
+try:
+    from slack_sdk.socket_mode.aiohttp import SocketModeClient
+    from slack_sdk.socket_mode.request import SocketModeRequest
+    from slack_sdk.socket_mode.response import SocketModeResponse
+except ImportError:  # pragma: no cover - exercised through injected fakes in tests.
     SocketModeClient = None
     SocketModeRequest = Any
     SocketModeResponse = None
@@ -49,19 +55,20 @@ class SlackConnector:
         self.socket_client = socket_client
         self._polling_task: asyncio.Task[None] | None = None
         self._background_tasks: set[asyncio.Task[object]] = set()
+        self._bot_user_id: str | None = None
+        self._allowed_channel_ids: set[str] = set()
+        self._channel_thread_policy: dict[str, bool] = {}
+        self._channel_name_cache: dict[str, str] = {}
 
     async def start(self) -> None:
         if not self.config.slack.enabled:
             return
         if self._should_use_socket_mode():
             self._ensure_socket_tokens()
-            if self.web_client is None:
-                if AsyncWebClient is None:
-                    raise RuntimeError("slack_sdk is required for Slack Socket Mode support.")
-                self.web_client = AsyncWebClient(token=self.config.settings.slack_bot_token)
+            await self._prepare_runtime_state()
             if self.socket_client is None:
                 if SocketModeClient is None:
-                    raise RuntimeError("slack_sdk is required for Slack Socket Mode support.")
+                    raise RuntimeError("Slack Socket Mode requires slack_sdk Socket Mode support and its aiohttp dependency.")
                 self.socket_client = SocketModeClient(
                     app_token=self.config.settings.slack_app_token,
                     web_client=self.web_client,
@@ -71,6 +78,7 @@ class SlackConnector:
             return
         if self._should_use_polling_mode() and self._polling_task is None:
             self._ensure_bot_token()
+            await self._prepare_runtime_state()
             self._polling_task = asyncio.create_task(self._polling_loop())
             return
         if self.config.slack.mode == SlackMode.WEBHOOK:
@@ -110,9 +118,12 @@ class SlackConnector:
         if not self.config.slack.enabled or not self._should_use_polling_mode():
             return []
         self._ensure_bot_token()
+        await self._prepare_runtime_state()
         messages: list[NormalizedMessage] = []
         async with self._polling_http_client() as client:
             for channel in self.config.slack.channels:
+                if not channel.channel_id:
+                    continue
                 messages.extend(await self._poll_channel(client, channel.channel_id, channel.include_threads))
         return messages
 
@@ -123,17 +134,29 @@ class SlackConnector:
         task.add_done_callback(lambda done: self._background_tasks.discard(done))
 
     def normalize_event(self, event: dict[str, Any], *, mode: str, event_id: str | None = None) -> NormalizedMessage | None:
-        if event.get("type") != "message":
+        event_type = str(event.get("type", ""))
+        if event_type not in {"message", "app_mention"}:
             return None
         if event.get("subtype"):
             return None
-        if self.config.slack.ignore_bot_messages and (event.get("bot_id") or event.get("user") is None):
+        user = event.get("user")
+        if self.config.slack.ignore_bot_messages and (event.get("bot_id") or user is None):
+            return None
+        if self._bot_user_id and user == self._bot_user_id:
             return None
         channel_id = str(event.get("channel", ""))
-        if not self._channel_allowed(channel_id):
+        channel_type = str(event.get("channel_type") or "")
+        is_dm = channel_type == "im"
+        if is_dm:
+            if not self.config.slack.behavior.allow_dms:
+                return None
+        elif not self._channel_allowed(channel_id):
             return None
         thread_ts = event.get("thread_ts")
-        if thread_ts and not self._include_threads_for_channel(channel_id):
+        if thread_ts and thread_ts != event.get("ts") and not self._include_threads_for_channel(channel_id):
+            return None
+        explicit_address = self._extract_explicit_address(event, is_dm=is_dm)
+        if explicit_address is None:
             return None
         return NormalizedMessage(
             id=new_id("msg"),
@@ -141,11 +164,15 @@ class SlackConnector:
             type=MessageType.MESSAGE_CREATED,
             payload={
                 "channel": channel_id,
-                "user": event.get("user"),
-                "text": event.get("text", ""),
+                "user": user,
+                "raw_text": event.get("text", ""),
+                "text": explicit_address["text"],
                 "ts": event.get("ts"),
                 "thread_ts": thread_ts,
                 "event_ts": event.get("event_ts") or event.get("ts"),
+                "is_dm": is_dm,
+                "mentioned_bot": explicit_address["mentioned_bot"],
+                "matched_prefix": explicit_address["matched_prefix"],
             },
             correlation_id=new_id("corr"),
             parent_message_id=None,
@@ -255,6 +282,7 @@ class SlackConnector:
                 "event_ts": item.get("ts"),
                 "bot_id": item.get("bot_id"),
                 "subtype": item.get("subtype"),
+                "channel_type": item.get("channel_type", "channel"),
             }
             message = self.normalize_event(event, mode="polling")
             if message is not None:
@@ -264,18 +292,17 @@ class SlackConnector:
     def _channel_allowed(self, channel_id: str) -> bool:
         if not self.config.slack.channels:
             return True
-        return any(channel.channel_id == channel_id for channel in self.config.slack.channels)
+        return channel_id in self._allowed_channel_ids
 
     def _include_threads_for_channel(self, channel_id: str) -> bool:
-        channel = next((item for item in self.config.slack.channels if item.channel_id == channel_id), None)
-        if channel is None:
+        if not channel_id:
             return True
-        return channel.include_threads
+        return self._channel_thread_policy.get(channel_id, True)
 
     def _dedupe_key(self, event_id: str | None, event: dict[str, Any]) -> str:
         if event_id:
-            return f"event:{event_id}"
-        return f"channel:{event.get('channel', '')}:{event.get('ts', '')}"
+            return f"slack:{event_id}"
+        return f"slack:{event.get('channel', '')}:{event.get('ts', '')}"
 
     def _is_duplicate(self, dedupe_key: str) -> bool:
         return self.cursors.get("slack_event", dedupe_key) is not None
@@ -312,6 +339,103 @@ class SlackConnector:
             raise RuntimeError("slack_sdk is required for Slack Web API access.")
         self.web_client = AsyncWebClient(token=self.config.settings.slack_bot_token)
         return self.web_client
+
+    async def _prepare_runtime_state(self) -> None:
+        web_client = await self._get_web_client()
+        if not self._bot_user_id:
+            auth = await web_client.auth_test()
+            self._bot_user_id = str(auth["user_id"])
+        await self._resolve_allowed_channels(web_client)
+
+    async def _resolve_allowed_channels(self, web_client: Any) -> None:
+        cached_names = self._load_channel_cache()
+        self._channel_name_cache = dict(cached_names)
+        unresolved = [channel for channel in self.config.slack.channels if not channel.channel_id and channel.channel_name]
+        if unresolved:
+            self._channel_name_cache.update(await self._fetch_channel_name_map(web_client))
+            self._save_channel_cache(self._channel_name_cache)
+        allowed_channel_ids: set[str] = set()
+        channel_thread_policy: dict[str, bool] = {}
+        for channel in self.config.slack.channels:
+            resolved_id = channel.channel_id
+            if not resolved_id and channel.channel_name:
+                resolved_id = self._channel_name_cache.get(channel.channel_name)
+                if not resolved_id:
+                    raise RuntimeError(f"Slack channel_name '{channel.channel_name}' could not be resolved to a channel ID.")
+                channel.channel_id = resolved_id
+            if resolved_id:
+                allowed_channel_ids.add(resolved_id)
+                channel_thread_policy[resolved_id] = channel.include_threads
+        self._allowed_channel_ids = allowed_channel_ids
+        self._channel_thread_policy = channel_thread_policy
+
+    async def _fetch_channel_name_map(self, web_client: Any) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        cursor: str | None = None
+        while True:
+            response = await web_client.conversations_list(types="public_channel,private_channel", limit=1000, cursor=cursor)
+            for channel in response.get("channels", []) or []:
+                name = channel.get("name")
+                channel_id = channel.get("id")
+                if name and channel_id:
+                    mapping[str(name)] = str(channel_id)
+            cursor = response.get("response_metadata", {}).get("next_cursor") or None
+            if not cursor:
+                break
+        return mapping
+
+    def _extract_explicit_address(self, event: dict[str, Any], *, is_dm: bool) -> dict[str, Any] | None:
+        raw_text = str(event.get("text") or "")
+        if not raw_text.strip():
+            return None
+        mention_token = f"<@{self._bot_user_id}>" if self._bot_user_id else ""
+        mentioned_bot = bool(mention_token and mention_token in raw_text)
+        matched_prefix = self._match_prefix(raw_text)
+        requires_mention = self.config.slack.behavior.requires_mention
+        if is_dm:
+            if not self.config.slack.behavior.allow_dms:
+                return None
+            if requires_mention and not (mentioned_bot or matched_prefix):
+                return None
+        elif event.get("type") == "app_mention":
+            mentioned_bot = True
+        elif requires_mention and not (mentioned_bot or matched_prefix):
+            return None
+        cleaned_text = raw_text
+        if mention_token:
+            cleaned_text = cleaned_text.replace(mention_token, " ")
+        if matched_prefix:
+            cleaned_text = cleaned_text[len(matched_prefix) :]
+        cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
+        if not cleaned_text:
+            return None
+        return {"text": cleaned_text, "mentioned_bot": mentioned_bot, "matched_prefix": matched_prefix}
+
+    def _match_prefix(self, raw_text: str) -> str | None:
+        for prefix in self.config.slack.behavior.prefixes:
+            if raw_text.startswith(prefix):
+                return prefix
+        return None
+
+    def _channel_cache_path(self) -> Path:
+        return Path(self.config.settings.sqlite_path).resolve().parent / "slack_channels.json"
+
+    def _load_channel_cache(self) -> dict[str, str]:
+        path = self._channel_cache_path()
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {str(key): str(value) for key, value in data.items()}
+
+    def _save_channel_cache(self, mapping: dict[str, str]) -> None:
+        path = self._channel_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(mapping, indent=2, sort_keys=True), encoding="utf-8")
 
     def _polling_http_client(self) -> httpx.AsyncClient | _SlackHttpClientContext:
         if self.polling_client:

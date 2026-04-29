@@ -12,7 +12,6 @@ workspace/
       AGENT.md
   skills/
     <skill_id>/
-      config.yaml
       SKILL.md
   prompt_templates/
     <template_id>.md
@@ -29,6 +28,8 @@ Each agent folder contains:
 
 - `config.yaml`: runtime/provider-facing configuration
 - `AGENT.md`: stable identity and operating instructions
+
+The base model is externalized in `config.yaml`, not hardcoded in code or prompts. If you want a specific model for an agent, set `model:` there explicitly.
 
 `AGENT.md` should describe the durable responsibilities of the agent. Route-specific tasks should not go there; they belong in prompt templates.
 
@@ -50,8 +51,12 @@ Skills are reusable instruction fragments shared across agents.
 
 Each skill folder contains:
 
-- `config.yaml`: skill metadata
-- `SKILL.md`: reusable instructions
+- `SKILL.md`: reusable instructions with required YAML frontmatter
+
+The YAML frontmatter is the source of truth for skill identity and triggering metadata. At minimum it should define:
+
+- `name`
+- `description`
 
 At runtime, ThruFlow appends enabled skill instructions after the agent’s `AGENT.md` content when building the system prompt for a session.
 
@@ -127,8 +132,8 @@ Optional `require_artifacts` can block downstream routing when an agent fails to
 
 ## Connector Config
 
-- `workspace/slack.yaml` controls Slack polling
 - `workspace/slack.yaml` controls Slack Socket Mode by default, with polling fallback available
+- Slack config supports multiple channels, DMs, explicit-address rules, and `channel_name` to `channel_id` resolution at startup
 - `workspace/telegram.yaml` controls Telegram polling and allowed chat IDs
 
 Both connectors are optional. Missing `telegram.yaml` loads as disabled.

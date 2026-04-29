@@ -22,6 +22,7 @@ from app.models import (
 
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([^}:]+)(?::-(.*?))?\}")
+_FRONTMATTER_PATTERN = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", re.DOTALL)
 
 
 class Settings(BaseSettings):
@@ -30,9 +31,10 @@ class Settings(BaseSettings):
     slack_bot_token: str = ""
     slack_app_token: str = ""
     telegram_bot_token: str = ""
+    ant_bin: str = "ant"
     sqlite_path: str = "./data/thruflow.db"
     workspace_path: str = "./workspace"
-    thruflow_fake_claude: bool = True
+    thruflow_fake_claude: bool = False
     anthropic_base_url: str = "https://api.anthropic.com/v1"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -110,6 +112,16 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return _expand_env_vars(data or {})
 
 
+def _parse_frontmatter_markdown(path: Path) -> tuple[dict[str, Any], str]:
+    text = path.read_text(encoding="utf-8")
+    match = _FRONTMATTER_PATTERN.match(text)
+    if not match:
+        raise ValueError(f"Skill file '{path}' is missing required YAML frontmatter.")
+    frontmatter = yaml.safe_load(match.group(1)) or {}
+    body = match.group(2).strip()
+    return _expand_env_vars(frontmatter), body
+
+
 def _load_agents(settings: Settings, workspace_path: Path) -> dict[str, AgentConfig]:
     agents_dir = workspace_path / "agents"
     agents: dict[str, AgentConfig] = {}
@@ -138,23 +150,25 @@ def _load_agents(settings: Settings, workspace_path: Path) -> dict[str, AgentCon
 def _load_skills(workspace_path: Path) -> dict[str, SkillConfig]:
     skills_dir = workspace_path / "skills"
     skills: dict[str, SkillConfig] = {}
-    for config_path in sorted(skills_dir.glob("*/config.yaml")):
-        skill_dir = config_path.parent
-        data = _load_yaml(config_path)
-        # Skills follow the same convention as agents: directory name first, config override if needed.
-        skill_id = data.get("skill_id") or skill_dir.name
-        instruction_path = skill_dir / "SKILL.md"
-        instructions = instruction_path.read_text(encoding="utf-8")
+    for instruction_path in sorted(skills_dir.glob("*/SKILL.md")):
+        skill_dir = instruction_path.parent
+        data, instructions = _parse_frontmatter_markdown(instruction_path)
+        if not data.get("name") or not data.get("description"):
+            raise ValueError(
+                f"Skill file '{instruction_path}' must define both 'name' and 'description' in YAML frontmatter."
+            )
+        skill_id = data.get("name") or skill_dir.name
         skill = SkillConfig.model_validate(
             {
                 **data,
-                "skill_id": skill_id,
+                "skill_id": skill_id.replace("-", "_"),
+                "description": data.get("description"),
                 "instruction_path": instruction_path,
                 "instructions": instructions,
-                "config_path": config_path,
+                "config_path": instruction_path,
             }
         )
-        skills[skill_id] = skill
+        skills[skill.skill_id] = skill
     return skills
 
 
