@@ -40,6 +40,15 @@ class Dispatcher:
         self.messages.create(message)
         created_sessions: list[str] = []
         for route in self.router.resolve(message):
+            logger.info(
+                "Dispatching route route_id=%s source=%s type=%s target_agent=%s correlation_id=%s parent_message_id=%s",
+                route.route_id,
+                message.source.value,
+                message.type.value,
+                route.agent_id,
+                message.correlation_id,
+                message.parent_message_id,
+            )
             session, output = await self.runner.run_dispatch(route)
             created_sessions.append(session.id)
             upstream_outputs = self.output_handler.upstream_outputs_from_message(message)
@@ -50,6 +59,13 @@ class Dispatcher:
                 upstream_outputs=upstream_outputs,
             )
             self.sessions.update_status(session.id, session.status, output_message_id=output_message.id)
+            logger.info(
+                "Completed route route_id=%s target_agent=%s session_id=%s output_message_id=%s",
+                route.route_id,
+                route.agent_id,
+                session.id,
+                output_message.id,
+            )
             await self._handle_reply(output_message, message)
             # Agent output re-enters the same dispatcher path, which gives ThruFlow simple DAG chaining without a graph engine.
             await self.dispatch(output_message)
@@ -70,6 +86,12 @@ class Dispatcher:
             return
         if reply.get("connector") == "slack":
             try:
+                logger.info(
+                    "Handling slack reply output_message_id=%s root_source=%s correlation_id=%s",
+                    output_message.id,
+                    root_message.source.value,
+                    output_message.correlation_id,
+                )
                 await self._reply_slack(output_message, root_message)
             except Exception:
                 logger.exception("Slack reply delivery failed for message %s", output_message.id)
@@ -92,16 +114,28 @@ class Dispatcher:
     async def _reply_slack(self, output_message: NormalizedMessage, root_message: NormalizedMessage) -> None:
         if not self.slack_connector or not self.slack_connector.config.slack.send_replies:
             return
-        if root_message.source.value != "slack":
+        reply = output_message.metadata.get("reply")
+        if not isinstance(reply, dict):
             return
-        channel = root_message.payload.get("channel")
+        channel: str | None = None
+        thread_ts: str | None = None
+        if root_message.source.value == "slack":
+            root_channel = root_message.payload.get("channel")
+            if root_channel:
+                channel = str(root_channel)
+                value = root_message.payload.get("thread_ts") or root_message.payload.get("ts")
+                thread_ts = str(value) if value else None
+        else:
+            channel = await self.slack_connector.resolve_channel(
+                channel_id=str(reply["channel_id"]) if reply.get("channel_id") else None,
+                channel_name=str(reply["channel_name"]) if reply.get("channel_name") else None,
+            )
         if not channel:
             return
-        thread_ts = root_message.payload.get("thread_ts") or root_message.payload.get("ts")
         await self.slack_connector.send_message(
-            channel=str(channel),
+            channel=channel,
             text=self._sanitize_slack_reply(str(output_message.payload.get("content", ""))),
-            thread_ts=str(thread_ts) if thread_ts else None,
+            thread_ts=thread_ts,
         )
 
     def _sanitize_slack_reply(self, text: str) -> str:

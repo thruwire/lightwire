@@ -39,6 +39,7 @@ except ImportError:  # pragma: no cover - exercised through injected fakes in te
 logger = logging.getLogger(__name__)
 
 DispatchCallback = Callable[[NormalizedMessage], Awaitable[object]]
+SLACK_BLOCK_TEXT_LIMIT = 3000
 
 
 class SlackConnector:
@@ -114,36 +115,55 @@ class SlackConnector:
     async def send_message(self, channel: str, text: str, thread_ts: str | None = None) -> None:
         self._ensure_bot_token()
         web_client = await self._get_web_client()
-        kwargs: dict[str, Any] = {
-            "channel": channel,
-            "text": self._slack_fallback_text(text),
-            "mrkdwn": True,
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": self._to_slack_mrkdwn(text),
-                    },
-                }
-            ],
-        }
-        if thread_ts:
-            kwargs["thread_ts"] = thread_ts
-        try:
-            await web_client.chat_postMessage(**kwargs)
-        except SlackApiError as exc:
-            response = getattr(exc, "response", None)
-            details = getattr(response, "data", {}) if response is not None else {}
-            logger.error(
-                "Slack reply failed channel=%s thread_ts=%s error=%s needed=%s provided=%s",
-                channel,
-                thread_ts,
-                details.get("error"),
-                details.get("needed"),
-                details.get("provided"),
-            )
-            raise
+        chunks = self._split_slack_mrkdwn(self._to_slack_mrkdwn(text))
+        active_thread_ts = thread_ts
+        for index, chunk in enumerate(chunks):
+            kwargs: dict[str, Any] = {
+                "channel": channel,
+                "text": self._slack_fallback_text(chunk),
+                "mrkdwn": True,
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": chunk,
+                        },
+                    }
+                ],
+            }
+            if active_thread_ts:
+                kwargs["thread_ts"] = active_thread_ts
+            try:
+                response = await web_client.chat_postMessage(**kwargs)
+            except SlackApiError as exc:
+                response_data = getattr(getattr(exc, "response", None), "data", {}) or {}
+                logger.error(
+                    "Slack reply failed channel=%s thread_ts=%s error=%s needed=%s provided=%s details=%s",
+                    channel,
+                    active_thread_ts,
+                    response_data.get("error"),
+                    response_data.get("needed"),
+                    response_data.get("provided"),
+                    response_data.get("errors"),
+                )
+                raise
+            if index == 0 and not active_thread_ts:
+                response_data = self._slack_response_data(response)
+                ts = response_data.get("ts")
+                if ts:
+                    active_thread_ts = str(ts)
+
+    async def resolve_channel(self, *, channel_id: str | None = None, channel_name: str | None = None) -> str | None:
+        if channel_id:
+            return channel_id
+        if not channel_name:
+            return None
+        await self._prepare_runtime_state()
+        for channel in self.config.slack.channels:
+            if channel.channel_name == channel_name and channel.channel_id:
+                return channel.channel_id
+        return self._channel_name_cache.get(channel_name)
 
     async def poll(self) -> list[NormalizedMessage]:
         if not self.config.slack.enabled or not self._should_use_polling_mode():
@@ -555,6 +575,29 @@ class SlackConnector:
         fallback = fallback.replace("**", "").replace("__", "")
         fallback = re.sub(r"(?m)^#{1,6}\s+", "", fallback)
         return fallback
+
+    def _split_slack_mrkdwn(self, text: str, limit: int = SLACK_BLOCK_TEXT_LIMIT) -> list[str]:
+        if len(text) <= limit:
+            return [text]
+        chunks: list[str] = []
+        remaining = text
+        while len(remaining) > limit:
+            split_at = remaining.rfind("\n\n", 0, limit + 1)
+            if split_at == -1:
+                split_at = remaining.rfind("\n", 0, limit + 1)
+            if split_at == -1:
+                split_at = remaining.rfind(" ", 0, limit + 1)
+            if split_at == -1 or split_at < limit // 2:
+                split_at = limit
+            chunk = remaining[:split_at].rstrip()
+            if not chunk:
+                chunk = remaining[:limit]
+                split_at = limit
+            chunks.append(chunk)
+            remaining = remaining[split_at:].lstrip()
+        if remaining:
+            chunks.append(remaining)
+        return chunks
 
     def _match_prefix(self, raw_text: str) -> str | None:
         for prefix in self.config.slack.behavior.prefixes:

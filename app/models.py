@@ -47,6 +47,8 @@ class RouteTarget(BaseModel):
 class RouteReplyConfig(BaseModel):
     connector: str
     mode: str
+    channel_id: str | None = None
+    channel_name: str | None = None
 
 
 class RouteConfig(BaseModel):

@@ -15,6 +15,7 @@ class FakeSlackWebClient:
     def __init__(self, *, channel_map: dict[str, str] | None = None) -> None:
         self.messages: list[dict[str, object]] = []
         self.channel_map = channel_map or {"ai-playground": "C123456", "ops-private": "G999999"}
+        self._counter = 0
 
     async def auth_test(self) -> dict[str, object]:
         return {"ok": True, "user_id": "UBOT"}
@@ -28,7 +29,8 @@ class FakeSlackWebClient:
 
     async def chat_postMessage(self, **kwargs) -> dict[str, object]:
         self.messages.append(kwargs)
-        return {"ok": True}
+        self._counter += 1
+        return {"ok": True, "ts": f"1710000000.00010{self._counter}"}
 
 
 class FailingSlackWebClient(FakeSlackWebClient):
@@ -391,6 +393,19 @@ def test_slack_markdown_conversion(tmp_path) -> None:
     connector = SlackConnector(config, repo, _noop_dispatch)
     text = "# Title\n\n**bold** and [link](https://example.com)"
     assert connector._to_slack_mrkdwn(text) == "*Title*\n\n*bold* and <https://example.com|link>"
+
+
+def test_slack_reply_splits_long_messages_into_threaded_chunks(tmp_path) -> None:
+    repo = _build_repo(tmp_path)
+    config = _build_config(tmp_path)
+    web_client = FakeSlackWebClient()
+    connector = SlackConnector(config, repo, _noop_dispatch, web_client=web_client)
+    text = ("Paragraph one.\n\n" * 250).strip()
+    asyncio.run(connector.send_message("C123456", text))
+    assert len(web_client.messages) > 1
+    assert "thread_ts" not in web_client.messages[0]
+    assert web_client.messages[1]["thread_ts"] == "1710000000.000101"
+    assert all(len(message["blocks"][0]["text"]["text"]) <= 3000 for message in web_client.messages)
 
 
 def test_slack_polling_cursor_logic(tmp_path) -> None:
