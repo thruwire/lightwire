@@ -9,9 +9,10 @@
 5. Leave `ANTHROPIC_BASE_URL` at the public default only if the provider environment you are using exposes the managed-agent APIs ThruFlow needs at runtime.
 6. Set connector tokens such as `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want polling or Socket Mode enabled.
 7. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
-8. Install dependencies with `pip install -e .[dev]`.
-9. Run `python scripts/deploy_managed_agents.py`.
-10. Start the API with `uvicorn app.main:app --reload`.
+8. Leave `THRUFLOW_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want Anthropic sessions to remain open for manual follow-up.
+9. Install dependencies with `pip install -e .[dev]`.
+10. Run `python scripts/deploy_managed_agents.py`.
+11. Start the API with `uvicorn app.main:app --reload`.
 
 ## Docker
 
@@ -56,6 +57,8 @@ On application startup ThruFlow:
 6. starts enabled connectors
 
 On shutdown ThruFlow stops background loops cleanly.
+
+When a managed-agent run finishes successfully, ThruFlow captures the final output, records the remote session ID in SQLite for traceability, and then deletes the remote Anthropic session by default so the provider console does not fill up with idle leftovers. Set `THRUFLOW_DELETE_COMPLETED_SESSIONS=false` if you intentionally want to keep remote sessions around for manual inspection or continuation.
 
 ## State Files
 

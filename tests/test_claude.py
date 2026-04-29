@@ -1,5 +1,6 @@
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -133,6 +134,77 @@ def test_live_agent_deploy_prefers_cached_agent_id(tmp_path) -> None:
     assert any(args[:2] == ["beta:agents", "retrieve"] and args[3] == "agent_cached" for args, _ in calls)
     assert any(args[:2] == ["beta:agents", "update"] and args[3] == "agent_cached" for args, _ in calls)
     assert not any(args[:2] == ["beta:agents", "list"] for args, _ in calls)
+
+
+def test_sdk_session_deletes_completed_remote_session_by_default(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+    state.config.attach_provider_state("env_live", "mem_live")
+
+    delete_calls: list[str] = []
+
+    class FakeStream:
+        def __enter__(self):
+            return iter(
+                [
+                    SimpleNamespace(
+                        type="agent.message",
+                        content=[SimpleNamespace(type="text", text="done")],
+                    ),
+                    SimpleNamespace(type="session.status_idle"),
+                ]
+            )
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeEvents:
+        def stream(self, session_id: str) -> FakeStream:
+            assert session_id == "sesn_live"
+            return FakeStream()
+
+        def send(self, session_id: str, events: list[dict[str, object]]) -> None:
+            assert session_id == "sesn_live"
+            assert events[0]["type"] == "user.message"
+
+    class FakeSessions:
+        def __init__(self) -> None:
+            self.events = FakeEvents()
+
+        def create(self, **kwargs):
+            assert kwargs["environment_id"] == "env_live"
+            return SimpleNamespace(id="sesn_live")
+
+        def delete(self, session_id: str):
+            delete_calls.append(session_id)
+            return SimpleNamespace(id=session_id, type="session_deleted")
+
+    fake_client = SimpleNamespace(beta=SimpleNamespace(sessions=FakeSessions()))
+    state.claude._get_sdk_client = lambda: fake_client  # type: ignore[method-assign]
+
+    session_id, content, status, raw = state.claude._run_sdk_session(
+        SimpleNamespace(
+            agent_id="agent_live",
+            task_prompt="Write a note",
+            memory_store_id="mem_live",
+            memory_access="read_write",
+            correlation_id="corr_live",
+            vault_ids=[],
+            metadata={},
+        )
+    )
+
+    assert session_id == "sesn_live"
+    assert content == "done"
+    assert str(status) == "SessionStatus.COMPLETED"
+    assert delete_calls == ["sesn_live"]
+    assert raw["cleanup"]["attempted"] is True
+    assert raw["cleanup"]["deleted"] is True
 
 
 def test_live_resource_ensure_reuses_existing_cached_resources(tmp_path) -> None:

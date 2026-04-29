@@ -1,5 +1,11 @@
 built_in:
+  bash:
+    enabled: true
+    permission_policy: always_allow
   read:
+    enabled: true
+    permission_policy: always_allow
+  write:
     enabled: true
     permission_policy: always_allow
   web_fetch:

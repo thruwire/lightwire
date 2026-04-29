@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     sqlite_path: str = "./data/thruflow.db"
     workspace_path: str = "./workspace"
     thruflow_fake_claude: bool = False
+    thruflow_delete_completed_sessions: bool = True
     anthropic_base_url: str = "https://api.anthropic.com/v1"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

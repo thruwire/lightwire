@@ -67,6 +67,13 @@ ThruFlow keeps environments internal and places tool configuration at the worksp
 - Agent configs activate only the built-in tools and MCP tools they need.
 - Claude Managed Agents requires MCP servers to be remote HTTP endpoints; local stdio MCP servers are not sufficient.
 
+For the normal shared-memory artifact pattern, writable file tools are not optional in practice.
+
+- `read` lets downstream agents open specific artifact files.
+- `write` lets agents persist `/mnt/memory/artifacts/...` and `/mnt/memory/handoffs/...` outputs.
+- `bash` is often useful alongside `write` for simple shell-level file operations, but `write` should be the primary persistence path.
+- `web_search` and `web_fetch` should only be enabled on agents that actually need external research.
+
 For MCP auth, ThruFlow reads secret references from `workspace/tools.yaml`, creates or reuses Anthropic vaults and credentials, stores the resulting IDs in SQLite, and attaches the relevant `vault_ids` when sessions start. This keeps secrets out of reusable agent definitions while still supporting generic third-party MCP servers.
 
 Supported auth patterns in this repo today:
@@ -96,7 +103,9 @@ The full runtime walk-through is in [docs/architecture.md](./docs/architecture.m
 Agents should:
 1. Write full outputs to `/mnt/memory/artifacts`.
 2. Write compact handoff notes to `/mnt/memory/handoffs` when useful.
-3. Mention written `/mnt/memory` paths in their final response.
+3. Use the built-in `write` tool to persist those files at exact paths.
+4. Avoid reading directories like `/mnt/memory`; read specific files instead.
+5. Mention written `/mnt/memory` paths in their final response.
 
 Agents do not need to return JSON.
 
@@ -110,9 +119,10 @@ Agents do not need to return JSON.
 6. If your provider environment exposes managed-agent APIs at a different base URL, set `ANTHROPIC_BASE_URL` accordingly.
 7. Set `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want connector ingestion enabled.
 8. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
-9. Install dependencies with `pip install -e .[dev]`.
-10. Run `python scripts/deploy_managed_agents.py`.
-11. Start the API with `uvicorn app.main:app --reload`.
+9. Leave `THRUFLOW_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want remote Anthropic sessions to remain visible after each run.
+10. Install dependencies with `pip install -e .[dev]`.
+11. Run `python scripts/deploy_managed_agents.py`.
+12. Start the API with `uvicorn app.main:app --reload`.
 
 ## Docker Setup
 

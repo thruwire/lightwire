@@ -14,6 +14,7 @@ This page documents every workspace YAML file and the main environment variables
 - `TELEGRAM_BOT_TOKEN`: Telegram Bot API token
 - `WORKSPACE_PATH`: workspace root, defaults to `./workspace`
 - `SQLITE_PATH`: SQLite database path
+- `THRUFLOW_DELETE_COMPLETED_SESSIONS`: whether completed remote Anthropic sessions are deleted after ThruFlow captures the final output, defaults to `true`
 - MCP secret env vars referenced from `workspace/tools.yaml`
 
 ## `workspace/tools.yaml`
@@ -27,6 +28,15 @@ Shape:
 
 ```yaml
 built_in:
+  bash:
+    enabled: true
+    permission_policy: always_allow
+  read:
+    enabled: true
+    permission_policy: always_allow
+  write:
+    enabled: true
+    permission_policy: always_allow
   web_search:
     enabled: true
     permission_policy: always_allow
@@ -46,6 +56,14 @@ Built-in tool fields:
 
 - `enabled`: whether the tool is available in the registry
 - `permission_policy`: currently `always_allow` or `always_ask`
+
+Common built-in tools used by this repo's artifact-handoff pattern:
+
+- `read`
+- `write`
+- `bash`
+- `web_search`
+- `web_fetch`
 
 MCP server fields:
 
@@ -275,7 +293,9 @@ skills:
 
 tools:
   built_in:
+    - bash
     - read
+    - write
     - web_search
   mcp:
     external_research:
@@ -306,6 +326,8 @@ Required convention:
 
 - describe the durable role of the agent
 - explain the shared memory output convention
+- tell the agent to use the built-in `write` tool for durable `/mnt/memory` outputs
+- tell the agent not to read directories like `/mnt/memory`
 - instruct the agent to mention every `/mnt/memory/...` path it writes
 - allow natural language output
 - do not require JSON output

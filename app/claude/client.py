@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 from typing import Any
 
@@ -9,6 +10,9 @@ from app.config import RuntimeConfig
 from app.memory.path_extractor import extract_memory_paths
 from app.models import AgentConfig, ClaudeSessionRequest, ClaudeSessionResult, MCPServerAuthType, SessionStatus
 from app.utils.ids import new_id
+
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeManagedAgentClient:
@@ -283,6 +287,7 @@ class ClaudeManagedAgentClient:
         events_payload: list[dict[str, Any]] = []
         texts: list[str] = []
         final_status = SessionStatus.RUNNING
+        cleanup: dict[str, Any] = {"attempted": False, "deleted": False}
 
         with client.beta.sessions.events.stream(session_id) as stream:
             client.beta.sessions.events.send(
@@ -310,11 +315,21 @@ class ClaudeManagedAgentClient:
                 elif event_type == "session.error":
                     raise RuntimeError(f"Managed-agent session '{session_id}' failed: {json.dumps(event_dict)}")
 
+        if final_status == SessionStatus.COMPLETED and self.config.settings.thruflow_delete_completed_sessions:
+            cleanup["attempted"] = True
+            try:
+                deleted = client.beta.sessions.delete(session_id)
+                cleanup["deleted"] = True
+                cleanup["result"] = self._sdk_to_plain_data(deleted)
+            except Exception as exc:  # pragma: no cover - defensive provider cleanup path
+                cleanup["error"] = str(exc)
+                logger.warning("Managed-agent session cleanup failed for %s: %s", session_id, exc)
+
         return (
             session_id,
             "\n".join(texts).strip(),
             final_status,
-            {"session": self._sdk_to_plain_data(session), "events": events_payload},
+            {"session": self._sdk_to_plain_data(session), "events": events_payload, "cleanup": cleanup},
         )
 
     async def _wait_for_session_output(self, session_id: str, timeout_seconds: int = 120) -> tuple[str, SessionStatus, dict[str, Any]]:

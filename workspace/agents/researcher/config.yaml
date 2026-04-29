@@ -13,7 +13,9 @@ skills:
 
 tools:
   built_in:
+    - bash
     - read
+    - write
     - web_fetch
     - web_search
   mcp:

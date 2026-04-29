@@ -98,6 +98,13 @@ It contains:
 
 Agent configs then activate the specific built-in tools and MCP servers they need. This keeps infrastructure config at the workspace level and permissions at the agent level.
 
+For the standard memory-artifact flow, agents that are expected to create handoff files should usually activate at least:
+
+- `read`
+- `write`
+
+`bash` is also commonly useful. Agents that do not need external research should generally not activate `web_search` or `web_fetch`.
+
 ## Routes
 
 `workspace/routes.yaml` wires normalized messages to agent sessions.

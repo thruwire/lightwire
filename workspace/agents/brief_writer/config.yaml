@@ -13,4 +13,6 @@ skills:
 
 tools:
   built_in:
+    - bash
     - read
+    - write

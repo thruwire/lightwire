@@ -20,6 +20,8 @@ Use /mnt/memory as the durable shared workspace.
 When you produce durable work:
 - Write the full artifact to an appropriate path under /mnt/memory/artifacts.
 - Write compact handoff notes, when useful, under /mnt/memory/handoffs.
+- Use the built-in write tool to persist those files at the exact paths you intend to hand off.
+- Do not read directories like /mnt/memory; only read specific file paths you already know.
 - In your final response, mention every /mnt/memory path you wrote.
 
 ThruFlow uses the paths in your final response to pass work to downstream agents.
