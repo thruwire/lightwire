@@ -204,18 +204,19 @@ class ClaudeManagedAgentClient:
         if self.config.settings.thruflow_fake_claude:
             return new_id("vault")
         await self._require_ant()
+        managed_slug = str(metadata.get("managed_agents_slug") or metadata.get("agent_id") or display_name)
         payload = {
             "display_name": display_name,
             "metadata": metadata
             | {
                 "managed_agents_repo": "thruflow",
                 "managed_agents_kind": "vault",
-                "managed_agents_slug": metadata.get("agent_id", display_name),
+                "managed_agents_slug": managed_slug,
             },
         }
         existing = await self._find_named_resource(
             ["beta:vaults", "list", "--limit", "100", "--format", "json"],
-            metadata_slug=metadata.get("agent_id", display_name),
+            metadata_slug=managed_slug,
             name=display_name,
             archive_duplicates=("beta:vaults", "--vault-id"),
         )
@@ -238,9 +239,13 @@ class ClaudeManagedAgentClient:
         if self.config.settings.thruflow_fake_claude:
             return new_id("credential")
         await self._require_ant()
+        managed_slug = str(
+            metadata.get("managed_agents_slug")
+            or f"{metadata.get('agent_id', display_name)}:{metadata.get('server_name', display_name)}"
+        )
         existing = await self._find_named_resource(
             ["beta:vaults:credentials", "list", "--vault-id", vault_id, "--limit", "100", "--format", "json"],
-            metadata_slug=f"{metadata.get('agent_id', display_name)}:{metadata.get('server_name', display_name)}",
+            metadata_slug=managed_slug,
             name=display_name,
             archive_duplicates=("beta:vaults:credentials", "--credential-id", ["--vault-id", vault_id]),
         )
@@ -250,7 +255,7 @@ class ClaudeManagedAgentClient:
             | {
                 "managed_agents_repo": "thruflow",
                 "managed_agents_kind": "vault_credential",
-                "managed_agents_slug": f"{metadata.get('agent_id', display_name)}:{metadata.get('server_name', display_name)}",
+                "managed_agents_slug": managed_slug,
             },
             "auth": auth,
         }

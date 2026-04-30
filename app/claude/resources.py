@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
 import os
+from datetime import datetime, timedelta, timezone
+
+import httpx
 
 from app.claude.client import ClaudeManagedAgentClient
 from app.config import RuntimeConfig
@@ -85,11 +89,11 @@ class ClaudeProviderResourceService:
 
     async def ensure_agent_vaults(self, agent_id: str, *, verify_remote: bool = False) -> list[str]:
         agent = self.config.get_agent(agent_id)
-        if not agent.tools.mcp:
+        server_names = self._enabled_authenticated_mcp_servers(agent_id)
+        if not server_names:
             return []
 
-        vault_key = f"vault:{agent_id}"
-        # Vaults are per-agent because the same MCP server may be enabled for some agents and withheld from others.
+        vault_key = self._shared_vault_key()
         vault = self.repository.get("claude_managed_agents", "vault", vault_key)
         if vault and not verify_remote:
             vault_id = vault.external_id
@@ -97,35 +101,39 @@ class ClaudeProviderResourceService:
             vault_id = vault.external_id
         else:
             vault_id = await self.client.create_vault(
-                display_name=f"{agent.display_name or agent.agent_id} MCP",
-                metadata={"workspace": self.config.workspace_path.name, "agent_id": agent.agent_id},
+                display_name=f"{self.config.workspace_path.name} Shared MCP",
+                metadata={
+                    "workspace": self.config.workspace_path.name,
+                    "vault_scope": "shared_mcp",
+                    "managed_agents_slug": "shared-mcp",
+                },
             )
             vault = ProviderStateRecord(
                 provider="claude_managed_agents",
                 resource_type="vault",
                 logical_key=vault_key,
                 external_id=vault_id,
-                metadata={"workspace": self.config.workspace_path.name, "agent_id": agent.agent_id},
+                metadata={"workspace": self.config.workspace_path.name, "vault_scope": "shared_mcp"},
                 created_at=vault.created_at if vault else utc_now(),
                 updated_at=utc_now(),
             )
             self.repository.upsert(vault)
 
-        for server_name in sorted(agent.tools.mcp):
-            server = self.config.tools.mcp_servers.get(server_name)
-            if not server or not server.enabled or server.auth.type == MCPServerAuthType.NONE:
-                continue
-            credential_key = f"vault_credential:{agent_id}:{server_name}"
+        for server_name in server_names:
+            credential_key = self._shared_credential_key(server_name)
             credential = self.repository.get("claude_managed_agents", "vault_credential", credential_key)
-            auth_payload = self._build_vault_auth_payload(server_name)
+            auth_payload = await self._build_vault_auth_payload(server_name)
             if credential and not verify_remote:
-                continue
-            if credential and verify_remote and await self.client.vault_credential_exists(vault_id, credential.external_id):
                 continue
             credential_id = await self.client.create_or_update_vault_credential(
                 vault_id=vault_id,
-                display_name=f"{agent.display_name or agent.agent_id} {server_name} Credential",
-                metadata={"workspace": self.config.workspace_path.name, "agent_id": agent.agent_id, "server_name": server_name},
+                display_name=f"{server_name} Shared Credential",
+                metadata={
+                    "workspace": self.config.workspace_path.name,
+                    "server_name": server_name,
+                    "vault_scope": "shared_mcp",
+                    "managed_agents_slug": f"shared-mcp:{server_name}",
+                },
                 auth=auth_payload,
             )
             credential = ProviderStateRecord(
@@ -133,7 +141,7 @@ class ClaudeProviderResourceService:
                 resource_type="vault_credential",
                 logical_key=credential_key,
                 external_id=credential_id,
-                metadata={"vault_id": vault_id, "server_name": server_name},
+                metadata={"vault_id": vault_id, "server_name": server_name, "vault_scope": "shared_mcp"},
                 created_at=credential.created_at if credential else utc_now(),
                 updated_at=utc_now(),
             )
@@ -159,26 +167,24 @@ class ClaudeProviderResourceService:
                     f"Agent '{agent_id}' has not been deployed yet. Run the managed-agent deploy step "
                     "before starting ThruFlow in live mode."
                 )
-            if not agent.tools.mcp:
+            server_names = self._enabled_authenticated_mcp_servers(agent_id)
+            if not server_names:
                 continue
-            vault_record = self.repository.get("claude_managed_agents", "vault", f"vault:{agent_id}")
+            vault_record = self.repository.get("claude_managed_agents", "vault", self._shared_vault_key())
             if not vault_record:
                 raise RuntimeError(
-                    f"Vault for agent '{agent_id}' has not been deployed yet. Run the managed-agent deploy step "
+                    "Shared MCP vault has not been deployed yet. Run the managed-agent deploy step "
                     "before starting ThruFlow in live mode."
                 )
-            for server_name in sorted(agent.tools.mcp):
-                server = self.config.tools.mcp_servers.get(server_name)
-                if not server or not server.enabled or server.auth.type == MCPServerAuthType.NONE:
-                    continue
+            for server_name in server_names:
                 credential = self.repository.get(
                     "claude_managed_agents",
                     "vault_credential",
-                    f"vault_credential:{agent_id}:{server_name}",
+                    self._shared_credential_key(server_name),
                 )
                 if not credential:
                     raise RuntimeError(
-                        f"Vault credential for agent '{agent_id}' and MCP server '{server_name}' has not been deployed yet. "
+                        f"Shared vault credential for MCP server '{server_name}' has not been deployed yet. "
                         "Run the managed-agent deploy step before starting ThruFlow in live mode."
                     )
 
@@ -205,7 +211,7 @@ class ClaudeProviderResourceService:
     def _memory_store_name(self) -> str:
         return f"thruflow-{self.config.workspace_path.name}-shared-memory"
 
-    def _build_vault_auth_payload(self, server_name: str) -> dict[str, object]:
+    async def _build_vault_auth_payload(self, server_name: str) -> dict[str, object]:
         server = self.config.tools.mcp_servers[server_name]
         auth = server.auth
         if auth.type == MCPServerAuthType.STATIC_BEARER_ENV:
@@ -217,7 +223,7 @@ class ClaudeProviderResourceService:
                 "token": token,
             }
         if auth.type == MCPServerAuthType.MCP_OAUTH_ENV:
-            # OAuth tokens are still sourced from env in this repo; the provider vault stores the credential copy.
+            # Backward-compatible path: token material is sourced directly from env.
             payload: dict[str, object] = {
                 "type": "mcp_oauth",
                 "mcp_server_url": server.url,
@@ -239,7 +245,106 @@ class ClaudeProviderResourceService:
                     },
                 }
             return payload
+        if auth.type == MCPServerAuthType.MCP_OAUTH_CLIENT_CREDENTIALS_ENV:
+            minted = await self._mint_client_credentials_token_pair(server_name)
+            refresh: dict[str, object] = {
+                "client_id": self._require_env(auth.client_id_env_var, server_name),
+                "refresh_token": minted["refresh_token"],
+                "token_endpoint": self._require_auth_value(auth.token_endpoint, "token_endpoint", server_name),
+                "token_endpoint_auth": {
+                    "type": auth.token_endpoint_auth_method or "client_secret_post",
+                },
+            }
+            scope = auth.scope or minted.get("scope") or ""
+            if scope:
+                refresh["scope"] = scope
+            auth_method = auth.token_endpoint_auth_method or "client_secret_post"
+            if auth_method != "none":
+                refresh["token_endpoint_auth"]["client_secret"] = self._require_env(auth.client_secret_env_var, server_name)
+            return {
+                "type": "mcp_oauth",
+                "mcp_server_url": server.url,
+                "access_token": minted["access_token"],
+                "expires_at": minted["expires_at"],
+                "refresh": refresh,
+            }
         raise ValueError(f"Unsupported auth type for MCP server '{server_name}': {auth.type}")
+
+    async def _mint_client_credentials_token_pair(self, server_name: str) -> dict[str, str]:
+        server = self.config.tools.mcp_servers[server_name]
+        auth = server.auth
+        token_endpoint = self._require_auth_value(auth.token_endpoint, "token_endpoint", server_name)
+        client_id = self._require_env(auth.client_id_env_var, server_name)
+        auth_method = auth.token_endpoint_auth_method or "client_secret_post"
+        client_secret = ""
+        if auth_method != "none":
+            client_secret = self._require_env(auth.client_secret_env_var, server_name)
+
+        if self.config.settings.thruflow_fake_claude:
+            return {
+                "access_token": f"mock-{server_name}-access-token",
+                "refresh_token": f"mock-{server_name}-refresh-token",
+                "expires_at": "2099-01-01T00:00:00Z",
+                "scope": auth.scope or "",
+            }
+
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        data = {"grant_type": "client_credentials"}
+        if auth_method == "client_secret_basic":
+            headers["Authorization"] = "Basic " + base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+        elif auth_method == "client_secret_post":
+            data["client_id"] = client_id
+            data["client_secret"] = client_secret
+        elif auth_method == "none":
+            data["client_id"] = client_id
+        else:
+            raise ValueError(
+                f"MCP server '{server_name}' has unsupported token_endpoint_auth_method '{auth_method}'. "
+                "Expected one of: none, client_secret_basic, client_secret_post."
+            )
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(token_endpoint, data=data, headers=headers)
+        response.raise_for_status()
+        payload = response.json()
+
+        access_token = str(payload.get("access_token") or "")
+        refresh_token = str(payload.get("refresh_token") or "")
+        expires_in = payload.get("expires_in")
+        if not access_token or not refresh_token or expires_in in (None, ""):
+            raise ValueError(
+                f"MCP server '{server_name}' client-credentials bootstrap requires token endpoint "
+                "responses containing access_token, refresh_token, and expires_in so Anthropic can refresh the credential."
+            )
+
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": expires_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "scope": str(payload.get("scope") or ""),
+        }
+
+    def _enabled_authenticated_mcp_servers(self, agent_id: str) -> list[str]:
+        agent = self.config.get_agent(agent_id)
+        server_names: list[str] = []
+        for server_name in sorted(agent.tools.mcp):
+            server = self.config.tools.mcp_servers.get(server_name)
+            if not server or not server.enabled or server.auth.type == MCPServerAuthType.NONE:
+                continue
+            server_names.append(server_name)
+        return server_names
+
+    def _shared_vault_key(self) -> str:
+        return "shared"
+
+    def _shared_credential_key(self, server_name: str) -> str:
+        return f"shared:{server_name}"
+
+    def _require_auth_value(self, value: str | None, field_name: str, server_name: str) -> str:
+        if value:
+            return value
+        raise ValueError(f"MCP server '{server_name}' requires auth field '{field_name}' to be configured.")
 
     def _require_env(self, env_var: str | None, server_name: str) -> str:
         if not env_var:

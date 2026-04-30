@@ -115,6 +115,7 @@ class MCPServerAuthType(str, Enum):
     NONE = "none"
     STATIC_BEARER_ENV = "static_bearer_env"
     MCP_OAUTH_ENV = "mcp_oauth_env"
+    MCP_OAUTH_CLIENT_CREDENTIALS_ENV = "mcp_oauth_client_credentials_env"
 
 
 class MCPServerAuthConfig(BaseModel):

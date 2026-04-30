@@ -100,6 +100,8 @@ Agent configs then activate the specific built-in tools and MCP servers they nee
 
 Agents that do not need external research should generally not activate `web_search` or `web_fetch`.
 
+For OAuth-backed MCP servers, prefer `mcp_oauth_client_credentials_env` in `workspace/tools.yaml` over `mcp_oauth_env` when the token endpoint returns refreshable credentials. That keeps deploy repos focused on stable client configuration instead of transient access-token material.
+
 ## Routes
 
 `workspace/routes.yaml` wires normalized messages to agent sessions.

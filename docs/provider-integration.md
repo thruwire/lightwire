@@ -27,8 +27,8 @@ Current managed resources:
 
 - Claude environment
 - shared memory store
-- per-agent vaults for MCP credentials
-- vault credentials for authenticated MCP servers
+- shared workspace MCP vaults
+- vault credentials for authenticated MCP servers, keyed by MCP server
 
 These IDs are stored in the `provider_state` table.
 
@@ -91,8 +91,15 @@ Current auth patterns:
 
 - `static_bearer_env`
 - `mcp_oauth_env`
+- `mcp_oauth_client_credentials_env`
+
+`mcp_oauth_env` is a compatibility path when you already have token material available externally.
+
+`mcp_oauth_client_credentials_env` is the preferred pattern for OAuth-backed remote MCP servers in managed-agent deployments. With that mode, ThruFlow reads only the stable OAuth client configuration from env, mints the initial access and refresh tokens during deploy, writes an Anthropic vault credential of type `mcp_oauth`, and relies on Anthropic-managed refresh after that.
 
 The repo reads secret values from environment variables, creates or reuses provider vault credentials, and then attaches the resulting vault IDs at session start.
+
+For the common shared-service case, ThruFlow now creates one shared MCP vault per workspace and one credential per configured MCP server, then reuses that shared vault across agents that activate the same server.
 
 ## Fake Mode
 

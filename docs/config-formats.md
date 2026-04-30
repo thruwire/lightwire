@@ -78,6 +78,28 @@ Supported auth types:
 - `none`
 - `static_bearer_env`
 - `mcp_oauth_env`
+- `mcp_oauth_client_credentials_env`
+
+`mcp_oauth_env` expects access-token material to already exist in env at deploy time.
+
+`mcp_oauth_client_credentials_env` expects stable OAuth client settings in env and lets ThruFlow mint the initial token pair during deploy:
+
+```yaml
+mcp_servers:
+  thruwire:
+    enabled: true
+    type: url
+    url: ${THRUWIRE_MCP_URL}
+    permission_policy: always_allow
+    auth:
+      type: mcp_oauth_client_credentials_env
+      token_endpoint: ${THRUWIRE_OAUTH_TOKEN_ENDPOINT}
+      client_id_env_var: THRUWIRE_MCP_CLIENT_ID
+      client_secret_env_var: THRUWIRE_MCP_CLIENT_SECRET
+      token_endpoint_auth_method: ${THRUWIRE_OAUTH_TOKEN_ENDPOINT_AUTH_METHOD:-client_secret_post}
+```
+
+For this mode to support Anthropic automatic refresh, the token endpoint must return `access_token`, `refresh_token`, and `expires_in`.
 
 ## `workspace/routes.yaml`
 

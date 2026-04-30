@@ -77,6 +77,9 @@ Supported auth patterns in this repo today:
 
 - `static_bearer_env`
 - `mcp_oauth_env`
+- `mcp_oauth_client_credentials_env`
+
+For OAuth-backed MCP servers, `mcp_oauth_client_credentials_env` is the preferred pattern when your server supports client-credentials bootstrap and returns `access_token`, `refresh_token`, and `expires_in`. ThruFlow mints the initial token pair during deploy, stores the resulting `mcp_oauth` credential in an Anthropic vault, and Anthropic refreshes it later using the stored refresh configuration.
 
 For the full provider and MCP flow, see [docs/provider-integration.md](./docs/provider-integration.md).
 

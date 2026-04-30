@@ -58,10 +58,11 @@ class DeploymentService:
 
     async def _reconcile_removed_agents(self) -> None:
         configured_agent_ids = {agent_id for agent_id, agent in self.config.agents.items() if agent.enabled}
-        configured_mcp_agents = {
-            agent_id
+        configured_mcp_servers = {
+            server_name
             for agent_id, agent in self.config.agents.items()
-            if agent.enabled and agent.tools.mcp
+            if agent.enabled
+            for server_name in self.resources._enabled_authenticated_mcp_servers(agent_id)
         }
 
         # SQLite reconciliation catches agents that used to exist locally but have
@@ -73,14 +74,17 @@ class DeploymentService:
             self.provider_state.delete("claude_managed_agents", "agent", record.logical_key)
 
         for record in self.provider_state.list_by_type("claude_managed_agents", "vault_credential"):
-            agent_id = record.logical_key.split(":")[1] if ":" in record.logical_key else ""
-            if agent_id in configured_mcp_agents:
-                continue
+            if record.logical_key.startswith("shared:"):
+                server_name = record.logical_key.removeprefix("shared:")
+                if server_name in configured_mcp_servers:
+                    continue
+                vault_id = str(record.metadata.get("vault_id") or "")
+                if vault_id:
+                    await self.resources.client.archive_vault_credential(vault_id, record.external_id)
             self.provider_state.delete("claude_managed_agents", "vault_credential", record.logical_key)
 
         for record in self.provider_state.list_by_type("claude_managed_agents", "vault"):
-            agent_id = record.logical_key.removeprefix("vault:")
-            if agent_id in configured_mcp_agents:
+            if record.logical_key == "shared" and configured_mcp_servers:
                 continue
             await self._archive_remote_vault_tree(record.external_id)
             self.provider_state.delete("claude_managed_agents", "vault", record.logical_key)
@@ -93,11 +97,27 @@ class DeploymentService:
                 continue
             await self.resources.client.archive_agent(self.resources.client._extract_id(item))
 
+        configured_vault_slugs = {"shared-mcp"} if configured_mcp_servers else set()
         for item in await self.resources.client.list_managed_vaults():
             slug = str((item.get("metadata") or {}).get("managed_agents_slug") or "")
-            if not slug or slug in configured_mcp_agents:
+            if not slug or slug in configured_vault_slugs:
                 continue
             await self._archive_remote_vault_tree(self.resources.client._extract_id(item))
+
+        if configured_mcp_servers:
+            shared_vault = self.provider_state.get("claude_managed_agents", "vault", "shared")
+            if shared_vault:
+                for credential in await self.resources.client.list_vault_credentials(shared_vault.external_id):
+                    slug = str((credential.get("metadata") or {}).get("managed_agents_slug") or "")
+                    if not slug.startswith("shared-mcp:"):
+                        continue
+                    server_name = slug.removeprefix("shared-mcp:")
+                    if server_name in configured_mcp_servers:
+                        continue
+                    await self.resources.client.archive_vault_credential(
+                        shared_vault.external_id,
+                        self.resources.client._extract_id(credential),
+                    )
 
     async def _archive_remote_vault_tree(self, vault_id: str) -> None:
         for credential in await self.resources.client.list_vault_credentials(vault_id):

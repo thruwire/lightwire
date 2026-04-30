@@ -1,12 +1,13 @@
 import asyncio
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
 
 from app.config import Settings
 from app.main import build_state
-from app.models import ProviderStateRecord
+from app.models import MCPServerAuthType, ProviderStateRecord
 from app.utils.time import utc_now
 
 
@@ -394,9 +395,9 @@ def test_deploy_verify_remote_recreates_missing_cached_vault_and_credential(tmp_
         ProviderStateRecord(
             provider="claude_managed_agents",
             resource_type="vault",
-            logical_key="vault:researcher",
+            logical_key="shared",
             external_id="vault_stale",
-            metadata={"workspace": "workspace", "agent_id": "researcher"},
+            metadata={"workspace": "workspace", "vault_scope": "shared_mcp"},
             created_at=utc_now(),
             updated_at=utc_now(),
         )
@@ -405,7 +406,7 @@ def test_deploy_verify_remote_recreates_missing_cached_vault_and_credential(tmp_
         ProviderStateRecord(
             provider="claude_managed_agents",
             resource_type="vault_credential",
-            logical_key="vault_credential:researcher:external_research",
+            logical_key="shared:external_research",
             external_id="cred_stale",
             metadata={"vault_id": "vault_stale", "server_name": "external_research"},
             created_at=utc_now(),
@@ -420,7 +421,7 @@ def test_deploy_verify_remote_recreates_missing_cached_vault_and_credential(tmp_
         return False
 
     async def fake_create_vault(*, display_name: str, metadata: dict[str, str]) -> str:
-        assert metadata["agent_id"] == "researcher"
+        assert metadata["vault_scope"] == "shared_mcp"
         return "vault_new"
 
     async def fake_create_or_update_vault_credential(
@@ -452,15 +453,142 @@ def test_deploy_verify_remote_recreates_missing_cached_vault_and_credential(tmp_
             os.environ["EXTERNAL_RESEARCH_MCP_TOKEN"] = previous
 
     assert vault_ids == ["vault_new"]
-    assert state.provider_state.get("claude_managed_agents", "vault", "vault:researcher").external_id == "vault_new"
+    assert state.provider_state.get("claude_managed_agents", "vault", "shared").external_id == "vault_new"
     assert (
         state.provider_state.get(
             "claude_managed_agents",
             "vault_credential",
-            "vault_credential:researcher:external_research",
+            "shared:external_research",
         ).external_id
         == "cred_new"
     )
+
+
+def test_oauth_client_credentials_bootstrap_builds_refreshable_shared_credential(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+
+    auth = state.config.tools.mcp_servers["external_research"].auth
+    auth.type = MCPServerAuthType.MCP_OAUTH_CLIENT_CREDENTIALS_ENV
+    auth.token_endpoint = "https://auth.example.com/oauth/token"
+    auth.client_id_env_var = "EXTERNAL_RESEARCH_OAUTH_CLIENT_ID"
+    auth.client_secret_env_var = "EXTERNAL_RESEARCH_OAUTH_CLIENT_SECRET"
+    auth.token_endpoint_auth_method = "client_secret_post"
+    auth.scope = "search:read"
+
+    previous_client_id = os.environ.get("EXTERNAL_RESEARCH_OAUTH_CLIENT_ID")
+    previous_client_secret = os.environ.get("EXTERNAL_RESEARCH_OAUTH_CLIENT_SECRET")
+    os.environ["EXTERNAL_RESEARCH_OAUTH_CLIENT_ID"] = "client-id"
+    os.environ["EXTERNAL_RESEARCH_OAUTH_CLIENT_SECRET"] = "client-secret"
+
+    async def fake_mint(_: str) -> dict[str, str]:
+        return {
+            "access_token": "access-1",
+            "refresh_token": "refresh-1",
+            "expires_at": "2026-05-01T00:00:00Z",
+            "scope": "search:read",
+        }
+
+    async def fake_create_vault(*, display_name: str, metadata: dict[str, str]) -> str:
+        assert metadata["managed_agents_slug"] == "shared-mcp"
+        return "vault_shared"
+
+    created_credentials: list[dict[str, object]] = []
+
+    async def fake_create_or_update_vault_credential(
+        *,
+        vault_id: str,
+        display_name: str,
+        metadata: dict[str, str],
+        auth: dict[str, object],
+    ) -> str:
+        created_credentials.append(
+            {
+                "vault_id": vault_id,
+                "display_name": display_name,
+                "metadata": metadata,
+                "auth": auth,
+            }
+        )
+        return "cred_shared"
+
+    state.resources._mint_client_credentials_token_pair = fake_mint  # type: ignore[method-assign]
+    state.claude.create_vault = fake_create_vault  # type: ignore[method-assign]
+    state.claude.create_or_update_vault_credential = fake_create_or_update_vault_credential  # type: ignore[method-assign]
+
+    try:
+        vault_ids = asyncio.run(state.resources.ensure_agent_vaults("researcher", verify_remote=True))
+    finally:
+        if previous_client_id is None:
+            os.environ.pop("EXTERNAL_RESEARCH_OAUTH_CLIENT_ID", None)
+        else:
+            os.environ["EXTERNAL_RESEARCH_OAUTH_CLIENT_ID"] = previous_client_id
+        if previous_client_secret is None:
+            os.environ.pop("EXTERNAL_RESEARCH_OAUTH_CLIENT_SECRET", None)
+        else:
+            os.environ["EXTERNAL_RESEARCH_OAUTH_CLIENT_SECRET"] = previous_client_secret
+
+    assert vault_ids == ["vault_shared"]
+    assert len(created_credentials) == 1
+    credential = created_credentials[0]
+    assert credential["vault_id"] == "vault_shared"
+    assert credential["metadata"]["managed_agents_slug"] == "shared-mcp:external_research"
+    assert credential["auth"]["type"] == "mcp_oauth"
+    assert credential["auth"]["access_token"] == "access-1"
+    assert credential["auth"]["expires_at"] == "2026-05-01T00:00:00Z"
+    assert credential["auth"]["refresh"]["refresh_token"] == "refresh-1"
+    assert credential["auth"]["refresh"]["client_id"] == "client-id"
+    assert credential["auth"]["refresh"]["token_endpoint_auth"]["client_secret"] == "client-secret"
+
+
+def test_shared_vault_is_reused_across_agents(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+
+    state.config.agents["analyst"].tools.mcp = {"external_research": state.config.agents["researcher"].tools.mcp["external_research"].model_copy(deep=True)}
+
+    vault_creates: list[dict[str, str]] = []
+
+    async def fake_create_vault(*, display_name: str, metadata: dict[str, str]) -> str:
+        vault_creates.append(metadata)
+        return "vault_shared"
+
+    async def fake_create_or_update_vault_credential(
+        *,
+        vault_id: str,
+        display_name: str,
+        metadata: dict[str, str],
+        auth: dict[str, object],
+    ) -> str:
+        return "cred_shared"
+
+    state.claude.create_vault = fake_create_vault  # type: ignore[method-assign]
+    state.claude.create_or_update_vault_credential = fake_create_or_update_vault_credential  # type: ignore[method-assign]
+
+    previous = os.environ.get("EXTERNAL_RESEARCH_MCP_TOKEN")
+    os.environ["EXTERNAL_RESEARCH_MCP_TOKEN"] = "token"
+    try:
+        first = asyncio.run(state.resources.ensure_agent_vaults("researcher", verify_remote=False))
+        second = asyncio.run(state.resources.ensure_agent_vaults("analyst", verify_remote=False))
+    finally:
+        if previous is None:
+            os.environ.pop("EXTERNAL_RESEARCH_MCP_TOKEN", None)
+        else:
+            os.environ["EXTERNAL_RESEARCH_MCP_TOKEN"] = previous
+
+    assert first == ["vault_shared"]
+    assert second == ["vault_shared"]
+    assert len(vault_creates) == 1
 
 
 def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
