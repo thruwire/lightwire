@@ -5,6 +5,9 @@ import copy
 import json
 import logging
 import shutil
+import tempfile
+import zipfile
+from pathlib import Path
 from typing import Any
 
 from app.config import RuntimeConfig
@@ -13,6 +16,18 @@ from app.utils.ids import new_id
 
 
 logger = logging.getLogger(__name__)
+SKILLS_BETA = "skills-2025-10-02"
+
+
+class _TemporaryPathContext:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def __enter__(self) -> Path:
+        return self.path
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.path.unlink(missing_ok=True)
 
 
 class ClaudeManagedAgentClient:
@@ -25,18 +40,22 @@ class ClaudeManagedAgentClient:
         system_prompt: str,
         *,
         existing_agent_id: str | None = None,
+        custom_skills: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
-        payload = self._build_agent_payload(agent, system_prompt)
+        payload = self._build_agent_payload(agent, system_prompt, custom_skills=custom_skills)
         if self.config.settings.thruflow_fake_claude:
-            return {
+            response = {
                 "id": agent.agent_id,
                 "name": agent.display_name or agent.agent_id,
                 "provider": agent.provider,
                 "status": "mocked",
                 "version": 1,
                 "tools": payload["tools"],
-                "mcp_servers": payload["mcp_servers"],
+                "mcp_servers": payload.get("mcp_servers", []),
             }
+            if "skills" in payload:
+                response["skills"] = payload["skills"]
+            return response
 
         await self._require_ant()
         # When deploy already knows the provider agent ID from SQLite, update that
@@ -103,6 +122,75 @@ class ClaudeManagedAgentClient:
 
     async def list_managed_vaults(self) -> list[dict[str, Any]]:
         return await self._list_managed_resources(["beta:vaults", "list", "--limit", "100", "--max-items", "-1", "--format", "json"])
+
+    async def list_custom_skills(self) -> list[dict[str, Any]]:
+        if self.config.settings.thruflow_fake_claude:
+            return []
+        await self._require_ant()
+        payload = await self._run_ant_json(
+            ["beta:skills", "list", "--limit", "100", "--max-items", "-1", "--beta", SKILLS_BETA, "--format", "json"]
+        )
+        return [item for item in self._list_items(payload) if item.get("source") == "custom"]
+
+    async def skill_exists(self, skill_id: str) -> bool:
+        return await self._resource_exists(["beta:skills", "retrieve", "--skill-id", skill_id, "--beta", SKILLS_BETA, "--format", "json"])
+
+    async def find_custom_skill_by_display_title(self, display_title: str) -> dict[str, Any] | None:
+        skills = await self.list_custom_skills()
+        matches = [item for item in skills if item.get("display_title") == display_title]
+        if not matches:
+            return None
+        matches.sort(key=self._resource_sort_key, reverse=True)
+        return matches[0]
+
+    async def create_skill(self, display_title: str, skill_dir: Path) -> dict[str, Any]:
+        if self.config.settings.thruflow_fake_claude:
+            return {"id": new_id("skill"), "display_title": display_title, "latest_version": "latest"}
+        await self._require_ant()
+        with self._pack_skill_directory(skill_dir) as archive_path:
+            return await self._run_ant_json(
+                [
+                    "beta:skills",
+                    "create",
+                    "--display-title",
+                    display_title,
+                    "--beta",
+                    SKILLS_BETA,
+                    "--format",
+                    "json",
+                    "--file",
+                    str(archive_path),
+                ]
+            )
+
+    async def create_skill_version(self, skill_id: str, skill_dir: Path) -> dict[str, Any]:
+        if self.config.settings.thruflow_fake_claude:
+            return {"skill_id": skill_id, "version": "latest"}
+        await self._require_ant()
+        with self._pack_skill_directory(skill_dir) as archive_path:
+            return await self._run_ant_json(
+                [
+                    "beta:skills:versions",
+                    "create",
+                    "--skill-id",
+                    skill_id,
+                    "--beta",
+                    SKILLS_BETA,
+                    "--format",
+                    "json",
+                    "--file",
+                    str(archive_path),
+                ]
+            )
+
+    async def delete_skill(self, skill_id: str) -> None:
+        if self.config.settings.thruflow_fake_claude:
+            return
+        await self._require_ant()
+        try:
+            await self._run_ant_json(["beta:skills", "delete", "--skill-id", skill_id, "--beta", SKILLS_BETA, "--format", "json"])
+        except RuntimeError:
+            return
 
     async def list_vault_credentials(self, vault_id: str) -> list[dict[str, Any]]:
         if self.config.settings.thruflow_fake_claude:
@@ -337,7 +425,13 @@ class ClaudeManagedAgentClient:
             )
         return str(data["id"])
 
-    def _build_agent_payload(self, agent: AgentConfig, system_prompt: str) -> dict[str, Any]:
+    def _build_agent_payload(
+        self,
+        agent: AgentConfig,
+        system_prompt: str,
+        *,
+        custom_skills: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": agent.display_name or agent.agent_id,
             "model": {"id": agent.model},
@@ -356,6 +450,8 @@ class ClaudeManagedAgentClient:
         mcp_servers = self._build_mcp_servers(agent)
         if mcp_servers:
             payload["mcp_servers"] = mcp_servers
+        if custom_skills:
+            payload["skills"] = custom_skills
         return payload
 
     def _is_agent_update_validation_error(self, exc: RuntimeError) -> bool:
@@ -640,6 +736,21 @@ class ClaudeManagedAgentClient:
             if not refresh:
                 update_auth.pop("refresh", None)
         return update_auth
+
+    def _pack_skill_directory(self, skill_dir: Path):
+        temp_file = tempfile.NamedTemporaryFile(prefix="thruflow-skill-", suffix=".zip", delete=False)
+        temp_path = Path(temp_file.name)
+        temp_file.close()
+        try:
+            with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for path in sorted(skill_dir.rglob("*")):
+                    if not path.is_file():
+                        continue
+                    archive.write(path, arcname=f"{skill_dir.name}/{path.relative_to(skill_dir).as_posix()}")
+            return _TemporaryPathContext(temp_path)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            raise
 
     def _extract_id(self, payload: dict[str, Any]) -> str:
         for key in ("id", "agent_id", "environment_id", "vault_id", "credential_id", "memory_store_id"):

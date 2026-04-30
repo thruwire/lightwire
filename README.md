@@ -39,7 +39,7 @@ workspace/
 
 - `workspace/agents/*/AGENT.md` holds stable provider-neutral agent instructions.
 - `workspace/agents/*/config.yaml` owns per-agent runtime settings such as provider, model, memory access, skills, and tool activation.
-- `workspace/skills/*/SKILL.md` holds reusable skill instructions.
+- `workspace/skills/*/SKILL.md` holds reusable custom-skill packages.
 - `workspace/prompt_templates/*.md` holds route-specific task prompts rendered with Jinja-style variables.
 - `workspace/tools.yaml` is the shared tool registry for built-in tools and remote MCP servers.
 - `workspace/routes.yaml` wires messages to agents and prompt templates.
@@ -50,6 +50,8 @@ workspace/
 Provider-managed memory may still be attached to sessions, but it is not used as the normal inter-agent routing contract.
 
 For a deeper breakdown of workspace files and responsibilities, see [docs/workspace.md](./docs/workspace.md).
+
+In live managed-agent deploys, ThruFlow uploads workspace skills through Anthropic's Skills API, creates new skill versions when the local files change, and attaches the resulting custom `skill_*` references to any agents that list those skills in `config.yaml`. In fake mode, the same `SKILL.md` files are inlined into the local system prompt so behavior remains testable without provider calls.
 
 ## Direct Routed Outputs
 

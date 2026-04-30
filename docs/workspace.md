@@ -58,6 +58,8 @@ The YAML frontmatter is the source of truth for skill identity and triggering me
 - `name`
 - `description`
 
+In live Claude Managed Agent deploys, ThruFlow uploads each workspace skill as an Anthropic custom skill and attaches the resulting `skill_*` ID to any agent that references it. A later deploy creates a new skill version when the local skill files change. In fake mode, ThruFlow instead inlines the skill body into the agent system prompt.
+
 At runtime, ThruFlow appends enabled skill instructions after the agent’s `AGENT.md` content when building the system prompt for a session.
 
 ## Prompt Templates

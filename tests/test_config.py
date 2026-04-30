@@ -31,5 +31,18 @@ def test_skills_load_from_skill_md_frontmatter() -> None:
     config = load_runtime_config(Settings(sqlite_path=":memory:", workspace_path="workspace"))
     structured_notes = config.skills["structured_notes"]
     assert structured_notes.skill_id == "structured_notes"
+    assert structured_notes.provider_name == "structured-notes"
     assert "Use this skill when the task requires structured synthesis" in structured_notes.instructions
     assert "concise handoffs" in (structured_notes.description or "")
+
+
+def test_live_system_prompt_does_not_inline_skill_bodies() -> None:
+    config = load_runtime_config(Settings(sqlite_path=":memory:", workspace_path="workspace", thruflow_fake_claude=False))
+    prompt = config.get_agent_system_prompt("researcher")
+    assert "Skill: structured_notes" not in prompt
+
+
+def test_fake_system_prompt_inlines_skill_bodies() -> None:
+    config = load_runtime_config(Settings(sqlite_path=":memory:", workspace_path="workspace", thruflow_fake_claude=True))
+    prompt = config.get_agent_system_prompt("researcher")
+    assert "Skill: structured_notes" in prompt

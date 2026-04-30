@@ -94,6 +94,7 @@ class AgentConfig(BaseModel):
 
 class SkillConfig(BaseModel):
     skill_id: str
+    provider_name: str
     enabled: bool = True
     description: str | None = None
     instruction_path: Path

@@ -188,6 +188,23 @@ def test_agent_payload_omits_empty_optional_fields(tmp_path) -> None:
     assert "mcp_servers" not in payload
 
 
+def test_agent_payload_includes_custom_skills_when_provided(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=True,
+        )
+    )
+    agent = state.config.get_agent("researcher")
+    payload = state.claude._build_agent_payload(
+        agent,
+        "system prompt",
+        custom_skills=[{"type": "custom", "skill_id": "skill_123", "version": "latest"}],
+    )
+    assert payload["skills"] == [{"type": "custom", "skill_id": "skill_123", "version": "latest"}]
+
+
 def test_live_agent_deploy_recreates_when_update_rejected(tmp_path) -> None:
     state = build_state(
         Settings(
@@ -694,6 +711,7 @@ def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
     )
 
     ensure_calls: list[bool] = []
+    skill_calls: list[bool] = []
     vault_calls: list[bool] = []
 
     async def fake_ensure(*, verify_remote: bool = False) -> tuple[str, str]:
@@ -703,10 +721,20 @@ def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
     async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
         vault_calls.append(verify_remote)
 
+    async def fake_ensure_skills(*, verify_remote: bool = False) -> None:
+        skill_calls.append(verify_remote)
+
     deploy_calls: list[str | None] = []
 
-    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+    async def fake_deploy_agent(
+        agent,
+        system_prompt: str,
+        *,
+        existing_agent_id: str | None = None,
+        custom_skills: list[dict[str, str]] | None = None,
+    ) -> dict[str, object]:
         deploy_calls.append(existing_agent_id)
+        assert custom_skills == [{"type": "custom", "skill_id": "skill_remote_structured", "version": "latest"}]
         return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id.title(), "version": 7}
 
     async def fake_list_managed_agents() -> list[dict[str, object]]:
@@ -716,7 +744,11 @@ def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
         return []
 
     state.resources.ensure = fake_ensure  # type: ignore[method-assign]
+    state.resources.ensure_skills = fake_ensure_skills  # type: ignore[method-assign]
     state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.resources.resolve_agent_custom_skills = (  # type: ignore[method-assign]
+        lambda agent_id: [{"type": "custom", "skill_id": "skill_remote_structured", "version": "latest"}]
+    )
     state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
     state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
     state.claude.list_managed_vaults = fake_list_managed_vaults  # type: ignore[method-assign]
@@ -724,6 +756,7 @@ def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
     results = asyncio.run(state.deploy.apply())
 
     assert ensure_calls == [True]
+    assert skill_calls == [True]
     assert vault_calls == [True]
     assert deploy_calls
     assert results

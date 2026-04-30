@@ -28,6 +28,7 @@ class DeploymentService:
         # Deploy verifies cached IDs remotely so stale local state can be repaired
         # after an operator manually deletes provider-side resources.
         await self.resources.ensure(verify_remote=True)
+        await self.resources.ensure_skills(verify_remote=True)
         await self.resources.ensure_all_agent_vaults(verify_remote=True)
         results: list[dict[str, object]] = []
         for agent_id, agent in self.config.agents.items():
@@ -40,6 +41,7 @@ class DeploymentService:
                 self.config.get_agent(agent_id),
                 self.config.get_agent_system_prompt(agent_id),
                 existing_agent_id=existing.external_id if existing else None,
+                custom_skills=self.resources.resolve_agent_custom_skills(agent_id),
             )
             self.provider_state.upsert(
                 ProviderStateRecord(
@@ -58,6 +60,13 @@ class DeploymentService:
 
     async def _reconcile_removed_agents(self) -> None:
         configured_agent_ids = {agent_id for agent_id, agent in self.config.agents.items() if agent.enabled}
+        configured_skill_ids = {
+            skill_id
+            for agent_id, agent in self.config.agents.items()
+            if agent.enabled
+            for skill_id in agent.skills
+            if skill_id in self.config.skills and self.config.skills[skill_id].enabled
+        }
         configured_mcp_servers = {
             server_name
             for agent_id, agent in self.config.agents.items()
@@ -72,6 +81,12 @@ class DeploymentService:
                 continue
             await self.resources.client.archive_agent(record.external_id)
             self.provider_state.delete("claude_managed_agents", "agent", record.logical_key)
+
+        for record in self.provider_state.list_by_type("claude_managed_agents", "skill"):
+            if record.logical_key in configured_skill_ids:
+                continue
+            await self.resources.client.delete_skill(record.external_id)
+            self.provider_state.delete("claude_managed_agents", "skill", record.logical_key)
 
         for record in self.provider_state.list_by_type("claude_managed_agents", "vault_credential"):
             if record.logical_key.startswith("shared:"):

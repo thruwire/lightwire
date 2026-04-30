@@ -28,6 +28,7 @@ Current managed resources:
 
 - Claude environment
 - shared memory store
+- custom skills referenced by the workspace
 - shared workspace MCP vaults
 - vault credentials for authenticated MCP servers, keyed by MCP server
 
@@ -52,7 +53,7 @@ If you want fully mocked behavior for tests or demos, set `THRUFLOW_FAKE_CLAUDE=
 For each route dispatch, ThruFlow builds a provider session request from:
 
 - agent instructions from `AGENT.md`
-- enabled `SKILL.md` instructions
+- custom skill attachments resolved from workspace `SKILL.md` packages
 - rendered route prompt template
 - any provider-side resources required by the adapter
 - agent-specific tool activation

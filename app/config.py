@@ -68,6 +68,8 @@ class RuntimeConfig(BaseModel):
     def get_agent_system_prompt(self, agent_id: str) -> str:
         agent = self.get_agent(agent_id)
         parts = [agent.instructions.strip()]
+        if not self.settings.thruflow_fake_claude:
+            return "\n\n".join(part for part in parts if part)
         for skill_id in agent.skills:
             skill = self.skills.get(skill_id)
             if skill and skill.enabled:
@@ -173,6 +175,7 @@ def _load_skills(workspace_path: Path) -> dict[str, SkillConfig]:
             {
                 **data,
                 "skill_id": skill_id.replace("-", "_"),
+                "provider_name": skill_id,
                 "description": data.get("description"),
                 "instruction_path": instruction_path,
                 "instructions": instructions,

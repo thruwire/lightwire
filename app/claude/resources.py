@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 
 from app.claude.client import ClaudeManagedAgentClient
 from app.config import RuntimeConfig
-from app.models import MCPServerAuthType, ProviderStateRecord
+from app.models import MCPServerAuthType, ProviderStateRecord, SkillConfig
 from app.repositories.provider_state import ProviderStateRepository
 from app.utils.time import utc_now
 
@@ -153,6 +155,79 @@ class ClaudeProviderResourceService:
             if not agent.enabled:
                 continue
             await self.ensure_agent_vaults(agent_id, verify_remote=verify_remote)
+
+    async def ensure_skills(self, *, verify_remote: bool = False) -> None:
+        for skill_id in self._enabled_skill_ids():
+            await self.ensure_skill(skill_id, verify_remote=verify_remote)
+
+    async def ensure_skill(self, skill_id: str, *, verify_remote: bool = False) -> str:
+        skill = self.config.skills[skill_id]
+        record = self.repository.get("claude_managed_agents", "skill", skill_id)
+        content_hash = self._compute_skill_hash(skill)
+        display_title = self._skill_display_title(skill)
+        skill_dir = skill.instruction_path.parent
+
+        remote_skill_id = ""
+        remote_exists = False
+        if record:
+            remote_skill_id = record.external_id
+            if not verify_remote:
+                remote_exists = True
+            elif await self.client.skill_exists(remote_skill_id):
+                remote_exists = True
+
+        if remote_exists and str(record.metadata.get("content_hash") or "") == content_hash:
+            return remote_skill_id
+
+        created_at = record.created_at if record else utc_now()
+        latest_version = ""
+        if not remote_exists:
+            existing = await self.client.find_custom_skill_by_display_title(display_title)
+            if existing:
+                remote_skill_id = self.client._extract_id(existing)
+                remote_exists = True
+
+        if remote_exists:
+            version = await self.client.create_skill_version(remote_skill_id, skill_dir)
+            latest_version = str(version.get("version") or "latest")
+        else:
+            created = await self.client.create_skill(display_title, skill_dir)
+            remote_skill_id = str(created["id"])
+            latest_version = str(created.get("latest_version") or "latest")
+
+        self.repository.upsert(
+            ProviderStateRecord(
+                provider="claude_managed_agents",
+                resource_type="skill",
+                logical_key=skill_id,
+                external_id=remote_skill_id,
+                metadata={
+                    "workspace_id": self.config.get_workspace_id(),
+                    "provider_name": skill.provider_name,
+                    "display_title": display_title,
+                    "content_hash": content_hash,
+                    "latest_version": latest_version,
+                },
+                created_at=created_at,
+                updated_at=utc_now(),
+            )
+        )
+        return remote_skill_id
+
+    def resolve_agent_custom_skills(self, agent_id: str) -> list[dict[str, str]]:
+        custom_skills: list[dict[str, str]] = []
+        for skill_id in self.config.get_agent(agent_id).skills:
+            skill = self.config.skills.get(skill_id)
+            if not skill or not skill.enabled:
+                continue
+            record = self.repository.get("claude_managed_agents", "skill", skill_id)
+            if not record:
+                raise RuntimeError(
+                    f"Custom skill '{skill_id}' has not been deployed yet. Run the managed-agent deploy step "
+                    "before starting ThruFlow in live mode."
+                )
+            custom_skills.append({"type": "custom", "skill_id": record.external_id, "version": "latest"})
+        return custom_skills
 
     def assert_runtime_ready(self) -> None:
         """Validate that the deploy step has produced all required provider state."""
@@ -340,6 +415,32 @@ class ClaudeProviderResourceService:
 
     def _shared_credential_key(self, server_name: str) -> str:
         return f"shared:{server_name}"
+
+    def _enabled_skill_ids(self) -> list[str]:
+        enabled: set[str] = set()
+        for agent_id, agent in self.config.agents.items():
+            if not agent.enabled:
+                continue
+            for skill_id in agent.skills:
+                skill = self.config.skills.get(skill_id)
+                if skill and skill.enabled:
+                    enabled.add(skill_id)
+        return sorted(enabled)
+
+    def _skill_display_title(self, skill: SkillConfig) -> str:
+        return f"{self.config.get_workspace_id()} / {skill.provider_name}"
+
+    def _skill_file_paths(self, skill: SkillConfig) -> list[Path]:
+        return sorted(path for path in skill.instruction_path.parent.rglob("*") if path.is_file())
+
+    def _compute_skill_hash(self, skill: SkillConfig) -> str:
+        digest = hashlib.sha256()
+        for path in self._skill_file_paths(skill):
+            digest.update(path.relative_to(skill.instruction_path.parent).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        return digest.hexdigest()
 
     def _require_auth_value(self, value: str | None, field_name: str, server_name: str) -> str:
         if value:
