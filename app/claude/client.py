@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import shutil
@@ -47,10 +48,21 @@ class ClaudeManagedAgentClient:
             update_payload = dict(payload)
             if "version" in existing:
                 update_payload["version"] = existing["version"]
-            return await self._run_ant_json(
-                ["beta:agents", "update", "--agent-id", existing_agent_id, "--format", "json"],
-                update_payload,
-            )
+            try:
+                return await self._run_ant_json(
+                    ["beta:agents", "update", "--agent-id", existing_agent_id, "--format", "json"],
+                    update_payload,
+                )
+            except RuntimeError as exc:
+                if not self._is_agent_update_validation_error(exc):
+                    raise
+                logger.warning(
+                    "Agent update rejected by Anthropic; archiving and recreating agent agent_id=%s provider_agent_id=%s",
+                    agent.agent_id,
+                    existing_agent_id,
+                )
+                await self.archive_agent(existing_agent_id)
+                return await self._run_ant_json(["beta:agents", "create", "--format", "json"], payload)
         existing = await self._find_named_resource(
             ["beta:agents", "list", "--limit", "100", "--format", "json"],
             metadata_slug=agent.agent_id,
@@ -63,10 +75,21 @@ class ClaudeManagedAgentClient:
         update_payload = dict(payload)
         if "version" in existing:
             update_payload["version"] = existing["version"]
-        return await self._run_ant_json(
-            ["beta:agents", "update", "--agent-id", agent_id, "--format", "json"],
-            update_payload,
-        )
+        try:
+            return await self._run_ant_json(
+                ["beta:agents", "update", "--agent-id", agent_id, "--format", "json"],
+                update_payload,
+            )
+        except RuntimeError as exc:
+            if not self._is_agent_update_validation_error(exc):
+                raise
+            logger.warning(
+                "Agent update rejected by Anthropic; archiving and recreating agent agent_id=%s provider_agent_id=%s",
+                agent.agent_id,
+                agent_id,
+            )
+            await self.archive_agent(agent_id)
+            return await self._run_ant_json(["beta:agents", "create", "--format", "json"], payload)
 
     async def create_or_update_agent(self, agent_id: str) -> dict[str, Any]:
         agent = self.config.get_agent(agent_id)
@@ -144,7 +167,7 @@ class ClaudeManagedAgentClient:
                 "managed_agents_repo": "thruflow",
                 "managed_agents_kind": "environment",
                 "managed_agents_slug": "default",
-                "workspace": self.config.workspace_path.name,
+                "workspace_id": self.config.get_workspace_id(),
             },
             "config": {
                 "type": "cloud",
@@ -177,12 +200,12 @@ class ClaudeManagedAgentClient:
         await self._require_ant()
         payload = {
             "name": name,
-            "description": f"Shared ThruFlow memory for workspace {self.config.workspace_path.name}.",
+            "description": f"Shared ThruFlow memory for workspace {self.config.get_workspace_id()}.",
             "metadata": {
                 "managed_agents_repo": "thruflow",
                 "managed_agents_kind": "memory_store",
                 "managed_agents_slug": "shared",
-                "workspace": self.config.workspace_path.name,
+                "workspace_id": self.config.get_workspace_id(),
             },
         }
         existing = await self._find_named_resource(
@@ -259,11 +282,44 @@ class ClaudeManagedAgentClient:
             },
             "auth": auth,
         }
+        update_payload = {
+            "display_name": display_name,
+            "metadata": payload["metadata"],
+            "auth": self._build_vault_credential_update_auth(auth),
+        }
         if existing is None:
-            data = await self._run_ant_json(
-                ["beta:vaults:credentials", "create", "--vault-id", vault_id, "--format", "json"],
-                payload,
-            )
+            try:
+                data = await self._run_ant_json(
+                    ["beta:vaults:credentials", "create", "--vault-id", vault_id, "--format", "json"],
+                    payload,
+                )
+            except RuntimeError as exc:
+                if "409 Conflict" not in str(exc):
+                    raise
+                # Anthropic may report a create conflict for a credential that already exists
+                # before the list view reflects it or when earlier local state was lost.
+                existing = await self._retry_find_named_resource(
+                    ["beta:vaults:credentials", "list", "--vault-id", vault_id, "--limit", "100", "--format", "json"],
+                    metadata_slug=managed_slug,
+                    name=display_name,
+                    archive_duplicates=("beta:vaults:credentials", "--credential-id", ["--vault-id", vault_id]),
+                )
+                if existing is None:
+                    raise
+                credential_id = self._extract_id(existing)
+                data = await self._run_ant_json(
+                    [
+                        "beta:vaults:credentials",
+                        "update",
+                        "--vault-id",
+                        vault_id,
+                        "--credential-id",
+                        credential_id,
+                        "--format",
+                        "json",
+                    ],
+                    update_payload,
+                )
         else:
             credential_id = self._extract_id(existing)
             data = await self._run_ant_json(
@@ -277,14 +333,13 @@ class ClaudeManagedAgentClient:
                     "--format",
                     "json",
                 ],
-                payload,
+                update_payload,
             )
         return str(data["id"])
 
     def _build_agent_payload(self, agent: AgentConfig, system_prompt: str) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "name": agent.display_name or agent.agent_id,
-            "description": agent.description,
             "model": {"id": agent.model},
             "system": system_prompt,
             "metadata": {
@@ -292,10 +347,20 @@ class ClaudeManagedAgentClient:
                 "managed_agents_kind": "agent",
                 "managed_agents_slug": agent.agent_id,
                 "agent_id": agent.agent_id,
+                "workspace_id": self.config.get_workspace_id(),
             },
-            "mcp_servers": self._build_mcp_servers(agent),
             "tools": self._build_tools(agent),
         }
+        if agent.description:
+            payload["description"] = agent.description
+        mcp_servers = self._build_mcp_servers(agent)
+        if mcp_servers:
+            payload["mcp_servers"] = mcp_servers
+        return payload
+
+    def _is_agent_update_validation_error(self, exc: RuntimeError) -> bool:
+        text = str(exc)
+        return "beta:agents update" in text and "400 Bad Request" in text
 
     def _run_sdk_session(self, request: ClaudeSessionRequest) -> tuple[str, str, SessionStatus, dict[str, Any]]:
         client = self._get_sdk_client()
@@ -484,6 +549,31 @@ class ClaudeManagedAgentClient:
             )
         return canonical
 
+    async def _retry_find_named_resource(
+        self,
+        command: list[str],
+        *,
+        metadata_slug: str,
+        name: str,
+        metadata_key: str = "managed_agents_slug",
+        archive_duplicates: tuple[str, str] | tuple[str, str, list[str]] | None = None,
+        attempts: int = 3,
+        delay_seconds: float = 1.0,
+    ) -> dict[str, Any] | None:
+        for index in range(attempts):
+            existing = await self._find_named_resource(
+                command,
+                metadata_slug=metadata_slug,
+                name=name,
+                metadata_key=metadata_key,
+                archive_duplicates=archive_duplicates,
+            )
+            if existing is not None:
+                return existing
+            if index < attempts - 1:
+                await asyncio.sleep(delay_seconds)
+        return None
+
     def _match_named_resources(
         self,
         payload: Any,
@@ -534,7 +624,22 @@ class ClaudeManagedAgentClient:
                 value = payload.get(key)
                 if isinstance(value, list):
                     return [item for item in value if isinstance(item, dict)]
+            # Some Anthropic CLI list commands return a single resource object rather
+            # than an array wrapper when only one result exists.
+            if any(key in payload for key in ("id", "agent_id", "environment_id", "vault_id", "credential_id")):
+                return [payload]
         return []
+
+    def _build_vault_credential_update_auth(self, auth: dict[str, Any]) -> dict[str, Any]:
+        update_auth = copy.deepcopy(auth)
+        update_auth.pop("mcp_server_url", None)
+        refresh = update_auth.get("refresh")
+        if isinstance(refresh, dict):
+            refresh.pop("client_id", None)
+            refresh.pop("token_endpoint", None)
+            if not refresh:
+                update_auth.pop("refresh", None)
+        return update_auth
 
     def _extract_id(self, payload: dict[str, Any]) -> str:
         for key in ("id", "agent_id", "environment_id", "vault_id", "credential_id", "memory_store_id"):
@@ -556,8 +661,10 @@ class ClaudeManagedAgentClient:
             return True
         await self._require_ant()
         try:
-            await self._run_ant_json(args)
+            payload = await self._run_ant_json(args)
         except RuntimeError:
+            return False
+        if isinstance(payload, dict) and payload.get("archived_at"):
             return False
         return True
 

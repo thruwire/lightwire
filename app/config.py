@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     ant_bin: str = "ant"
     sqlite_path: str = "./data/thruflow.db"
     workspace_path: str = "./workspace"
+    thruflow_workspace_id: str = ""
     thruflow_fake_claude: bool = False
     thruflow_delete_completed_sessions: bool = True
     anthropic_base_url: str = "https://api.anthropic.com/v1"
@@ -55,6 +56,11 @@ class RuntimeConfig(BaseModel):
     prompt_templates: dict[str, str] = Field(default_factory=dict)
     provider_environment_id: str | None = None
     provider_memory_store_id: str | None = None
+
+    def get_workspace_id(self) -> str:
+        if self.settings.thruflow_workspace_id.strip():
+            return self.settings.thruflow_workspace_id.strip()
+        return self.workspace_path.name
 
     def get_agent(self, agent_id: str) -> AgentConfig:
         return self.agents[agent_id]

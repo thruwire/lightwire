@@ -7,6 +7,7 @@ Managed-agent provisioning in this repo uses the Anthropic `ant` CLI. ThruFlow u
 ## Provider Resource Ownership
 
 ThruFlow manages provider resource IDs itself instead of requiring them in `.env`.
+For deployment repos that share the same Anthropic account/project, `THRUFLOW_WORKSPACE_ID` should be set explicitly so provider-side environments, memory stores, and shared MCP vault resources are uniquely namespaced.
 
 Deploy/apply is the mutating path:
 

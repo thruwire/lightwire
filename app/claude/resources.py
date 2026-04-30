@@ -48,7 +48,7 @@ class ClaudeProviderResourceService:
             resource_type="environment",
             logical_key="default",
             external_id=environment_id,
-            metadata={"workspace": self.config.workspace_path.name},
+            metadata={"workspace_id": self.config.get_workspace_id()},
             created_at=environment.created_at if environment else utc_now(),
             updated_at=utc_now(),
         )
@@ -60,7 +60,7 @@ class ClaudeProviderResourceService:
             resource_type="memory_store",
             logical_key="shared",
             external_id=memory_store_id,
-            metadata={"workspace": self.config.workspace_path.name, "access": "read_write"},
+            metadata={"workspace_id": self.config.get_workspace_id(), "access": "read_write"},
             created_at=memory_store.created_at if memory_store else utc_now(),
             updated_at=utc_now(),
         )
@@ -101,11 +101,11 @@ class ClaudeProviderResourceService:
             vault_id = vault.external_id
         else:
             vault_id = await self.client.create_vault(
-                display_name=f"{self.config.workspace_path.name} Shared MCP",
+                display_name=f"{self.config.get_workspace_id()} Shared MCP",
                 metadata={
-                    "workspace": self.config.workspace_path.name,
+                    "workspace_id": self.config.get_workspace_id(),
                     "vault_scope": "shared_mcp",
-                    "managed_agents_slug": "shared-mcp",
+                    "managed_agents_slug": f"{self.config.get_workspace_id()}:shared-mcp",
                 },
             )
             vault = ProviderStateRecord(
@@ -113,7 +113,7 @@ class ClaudeProviderResourceService:
                 resource_type="vault",
                 logical_key=vault_key,
                 external_id=vault_id,
-                metadata={"workspace": self.config.workspace_path.name, "vault_scope": "shared_mcp"},
+                metadata={"workspace_id": self.config.get_workspace_id(), "vault_scope": "shared_mcp"},
                 created_at=vault.created_at if vault else utc_now(),
                 updated_at=utc_now(),
             )
@@ -129,10 +129,10 @@ class ClaudeProviderResourceService:
                 vault_id=vault_id,
                 display_name=f"{server_name} Shared Credential",
                 metadata={
-                    "workspace": self.config.workspace_path.name,
+                    "workspace_id": self.config.get_workspace_id(),
                     "server_name": server_name,
                     "vault_scope": "shared_mcp",
-                    "managed_agents_slug": f"shared-mcp:{server_name}",
+                    "managed_agents_slug": f"{self.config.get_workspace_id()}:shared-mcp:{server_name}",
                 },
                 auth=auth_payload,
             )
@@ -206,10 +206,10 @@ class ClaudeProviderResourceService:
         return record.external_id
 
     def _environment_name(self) -> str:
-        return f"thruflow-{self.config.workspace_path.name}-environment"
+        return f"thruflow-{self.config.get_workspace_id()}-environment"
 
     def _memory_store_name(self) -> str:
-        return f"thruflow-{self.config.workspace_path.name}-shared-memory"
+        return f"thruflow-{self.config.get_workspace_id()}-shared-memory"
 
     async def _build_vault_auth_payload(self, server_name: str) -> dict[str, object]:
         server = self.config.tools.mcp_servers[server_name]

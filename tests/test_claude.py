@@ -50,6 +50,43 @@ def test_ant_json_parser_accepts_extra_stdout_and_returns_last_object(tmp_path) 
     assert parsed["id"] == "final"
 
 
+def test_retrieve_based_exists_checks_treat_archived_resources_as_missing(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+
+    async def fake_require_ant() -> None:
+        return None
+
+    archived_payloads = {
+        ("beta:agents", "retrieve"): {"id": "agent_archived", "archived_at": "2026-04-30T00:00:00Z"},
+        ("beta:environments", "retrieve"): {"id": "env_archived", "archived_at": "2026-04-30T00:00:00Z"},
+        ("beta:memory-stores", "retrieve"): {"id": "mem_archived", "archived_at": "2026-04-30T00:00:00Z"},
+        ("beta:vaults", "retrieve"): {"id": "vault_archived", "archived_at": "2026-04-30T00:00:00Z"},
+        ("beta:vaults:credentials", "retrieve"): {"id": "cred_archived", "archived_at": "2026-04-30T00:00:00Z"},
+    }
+
+    async def fake_run_ant_json(args: list[str], payload: dict | None = None) -> dict:
+        assert payload is None
+        key = (args[0], args[1])
+        if key not in archived_payloads:
+            raise AssertionError(f"unexpected command: {args}")
+        return archived_payloads[key]
+
+    state.claude._require_ant = fake_require_ant  # type: ignore[method-assign]
+    state.claude._run_ant_json = fake_run_ant_json  # type: ignore[method-assign]
+
+    assert asyncio.run(state.claude.agent_exists("agent_archived")) is False
+    assert asyncio.run(state.claude.environment_exists("env_archived")) is False
+    assert asyncio.run(state.claude.memory_store_exists("mem_archived")) is False
+    assert asyncio.run(state.claude.vault_exists("vault_archived")) is False
+    assert asyncio.run(state.claude.vault_credential_exists("vault_archived", "cred_archived")) is False
+
+
 def test_live_agent_deploy_updates_existing_slug_and_archives_duplicates(tmp_path) -> None:
     state = build_state(
         Settings(
@@ -135,6 +172,62 @@ def test_live_agent_deploy_prefers_cached_agent_id(tmp_path) -> None:
     assert any(args[:2] == ["beta:agents", "retrieve"] and args[3] == "agent_cached" for args, _ in calls)
     assert any(args[:2] == ["beta:agents", "update"] and args[3] == "agent_cached" for args, _ in calls)
     assert not any(args[:2] == ["beta:agents", "list"] for args, _ in calls)
+
+
+def test_agent_payload_omits_empty_optional_fields(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="/Users/dev/Documents/GitHub/thruflow-demo/workspace",
+            thruflow_fake_claude=True,
+        )
+    )
+    agent = state.config.get_agent("intake")
+    payload = state.claude._build_agent_payload(agent, "system prompt")
+    assert "description" not in payload
+    assert "mcp_servers" not in payload
+
+
+def test_live_agent_deploy_recreates_when_update_rejected(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+    calls: list[tuple[list[str], dict | None]] = []
+
+    async def fake_require_ant() -> None:
+        return None
+
+    async def fake_run_ant_json(args: list[str], payload: dict | None = None) -> dict | list[dict]:
+        calls.append((args, payload))
+        if args[:2] == ["beta:agents", "retrieve"]:
+            return {"id": "agent_cached", "version": 5, "name": "Researcher"}
+        if args[:2] == ["beta:agents", "update"]:
+            raise RuntimeError("Anthropic CLI command failed: ant beta:agents update --agent-id agent_cached --format json\nPOST ... 400 Bad Request")
+        if args[:2] == ["beta:agents", "archive"]:
+            return {"id": "agent_cached"}
+        if args[:2] == ["beta:agents", "create"]:
+            return {"id": "agent_new", "version": 1, "name": "Researcher"}
+        raise AssertionError(f"unexpected command: {args}")
+
+    state.claude._require_ant = fake_require_ant  # type: ignore[method-assign]
+    state.claude._run_ant_json = fake_run_ant_json  # type: ignore[method-assign]
+
+    result = asyncio.run(
+        state.claude.deploy_agent(
+            state.config.get_agent("researcher"),
+            state.config.get_agent_system_prompt("researcher"),
+            existing_agent_id="agent_cached",
+        )
+    )
+
+    assert result["id"] == "agent_new"
+    assert any(args[:2] == ["beta:agents", "update"] for args, _ in calls)
+    assert any(args[:2] == ["beta:agents", "archive"] and args[3] == "agent_cached" for args, _ in calls)
+    assert any(args[:2] == ["beta:agents", "create"] for args, _ in calls)
 
 
 def test_sdk_session_deletes_completed_remote_session_by_default(tmp_path) -> None:
@@ -755,8 +848,22 @@ def test_deployment_service_archives_remote_orphaned_agents(tmp_path) -> None:
 
     async def fake_list_managed_agents() -> list[dict[str, object]]:
         return [
-            {"id": "agent_orphan", "metadata": {"managed_agents_repo": "thruflow", "managed_agents_slug": "obsolete"}},
-            {"id": "agent_keep", "metadata": {"managed_agents_repo": "thruflow", "managed_agents_slug": "researcher"}},
+            {
+                "id": "agent_orphan",
+                "metadata": {
+                    "managed_agents_repo": "thruflow",
+                    "managed_agents_slug": "obsolete",
+                    "workspace_id": "workspace",
+                },
+            },
+            {
+                "id": "agent_keep",
+                "metadata": {
+                    "managed_agents_repo": "thruflow",
+                    "managed_agents_slug": "researcher",
+                    "workspace_id": "workspace",
+                },
+            },
         ]
 
     async def fake_archive_agent(agent_id: str) -> None:
@@ -775,3 +882,135 @@ def test_deployment_service_archives_remote_orphaned_agents(tmp_path) -> None:
     asyncio.run(state.deploy.apply())
 
     assert archived_agents == ["agent_orphan"]
+
+
+def test_deployment_service_does_not_archive_agents_from_other_workspaces(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+            thruflow_workspace_id="thruflow-demo",
+        )
+    )
+    state.config.agents = {"intake": state.config.agents["intake"].model_copy(deep=True)}
+
+    archived_agents: list[str] = []
+
+    async def fake_ensure(*, verify_remote: bool = False) -> tuple[str, str]:
+        return "env", "mem"
+
+    async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+        return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
+
+    async def fake_list_managed_agents() -> list[dict[str, object]]:
+        return [
+            {
+                "id": "agent_other_workspace",
+                "metadata": {
+                    "managed_agents_repo": "thruflow",
+                    "managed_agents_slug": "misalignment-agent",
+                    "workspace_id": "thruwire-thruflow",
+                },
+            },
+            {
+                "id": "agent_same_workspace_orphan",
+                "metadata": {
+                    "managed_agents_repo": "thruflow",
+                    "managed_agents_slug": "obsolete",
+                    "workspace_id": "thruflow-demo",
+                },
+            },
+            {
+                "id": "agent_same_workspace_keep",
+                "metadata": {
+                    "managed_agents_repo": "thruflow",
+                    "managed_agents_slug": "intake",
+                    "workspace_id": "thruflow-demo",
+                },
+            },
+        ]
+
+    async def fake_archive_agent(agent_id: str) -> None:
+        archived_agents.append(agent_id)
+
+    async def fake_list_managed_vaults() -> list[dict[str, object]]:
+        return []
+
+    state.resources.ensure = fake_ensure  # type: ignore[method-assign]
+    state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
+    state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
+    state.claude.archive_agent = fake_archive_agent  # type: ignore[method-assign]
+    state.claude.list_managed_vaults = fake_list_managed_vaults  # type: ignore[method-assign]
+
+    asyncio.run(state.deploy.apply())
+
+    assert archived_agents == ["agent_same_workspace_orphan"]
+
+
+def test_deployment_service_skips_missing_remote_vault_during_reconcile(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            thruflow_fake_claude=False,
+        )
+    )
+    state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+    state.config.agents["researcher"].tools.mcp = {}
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="vault",
+            logical_key="vault:obsolete",
+            external_id="vault_missing",
+            metadata={},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+
+    async def fake_ensure(*, verify_remote: bool = False) -> tuple[str, str]:
+        return "env", "mem"
+
+    async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+        return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
+
+    async def fake_vault_exists(vault_id: str) -> bool:
+        assert vault_id == "vault_missing"
+        return False
+
+    async def fail_list_vault_credentials(vault_id: str) -> list[dict[str, object]]:
+        raise AssertionError(f"should not list credentials for missing vault {vault_id}")
+
+    archived_vaults: list[str] = []
+
+    async def fake_archive_vault(vault_id: str) -> None:
+        archived_vaults.append(vault_id)
+
+    async def fake_list_managed_agents() -> list[dict[str, object]]:
+        return []
+
+    async def fake_list_managed_vaults() -> list[dict[str, object]]:
+        return []
+
+    state.resources.ensure = fake_ensure  # type: ignore[method-assign]
+    state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
+    state.claude.vault_exists = fake_vault_exists  # type: ignore[method-assign]
+    state.claude.list_vault_credentials = fail_list_vault_credentials  # type: ignore[method-assign]
+    state.claude.archive_vault = fake_archive_vault  # type: ignore[method-assign]
+    state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
+    state.claude.list_managed_vaults = fake_list_managed_vaults  # type: ignore[method-assign]
+
+    asyncio.run(state.deploy.apply())
+
+    assert archived_vaults == []
+    assert state.provider_state.get("claude_managed_agents", "vault", "vault:obsolete") is None

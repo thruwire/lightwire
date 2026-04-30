@@ -92,12 +92,16 @@ class DeploymentService:
         # Remote reconciliation catches orphaned Anthropic resources even if the
         # local SQLite state was lost or never recorded correctly.
         for item in await self.resources.client.list_managed_agents():
-            slug = str((item.get("metadata") or {}).get("managed_agents_slug") or "")
+            metadata = item.get("metadata") or {}
+            workspace_id = str(metadata.get("workspace_id") or "")
+            if workspace_id != self.config.get_workspace_id():
+                continue
+            slug = str(metadata.get("managed_agents_slug") or "")
             if not slug or slug in configured_agent_ids:
                 continue
             await self.resources.client.archive_agent(self.resources.client._extract_id(item))
 
-        configured_vault_slugs = {"shared-mcp"} if configured_mcp_servers else set()
+        configured_vault_slugs = {f"{self.config.get_workspace_id()}:shared-mcp"} if configured_mcp_servers else set()
         for item in await self.resources.client.list_managed_vaults():
             slug = str((item.get("metadata") or {}).get("managed_agents_slug") or "")
             if not slug or slug in configured_vault_slugs:
@@ -109,9 +113,10 @@ class DeploymentService:
             if shared_vault:
                 for credential in await self.resources.client.list_vault_credentials(shared_vault.external_id):
                     slug = str((credential.get("metadata") or {}).get("managed_agents_slug") or "")
-                    if not slug.startswith("shared-mcp:"):
+                    prefix = f"{self.config.get_workspace_id()}:shared-mcp:"
+                    if not slug.startswith(prefix):
                         continue
-                    server_name = slug.removeprefix("shared-mcp:")
+                    server_name = slug.removeprefix(prefix)
                     if server_name in configured_mcp_servers:
                         continue
                     await self.resources.client.archive_vault_credential(
@@ -120,6 +125,8 @@ class DeploymentService:
                     )
 
     async def _archive_remote_vault_tree(self, vault_id: str) -> None:
+        if not await self.resources.client.vault_exists(vault_id):
+            return
         for credential in await self.resources.client.list_vault_credentials(vault_id):
             await self.resources.client.archive_vault_credential(vault_id, self.resources.client._extract_id(credential))
         await self.resources.client.archive_vault(vault_id)

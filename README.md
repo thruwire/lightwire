@@ -125,16 +125,17 @@ Agents do not need to return JSON.
 
 1. Copy `.env.example` to `.env`.
 2. Set `WORKSPACE_PATH` if you want a workspace other than `./workspace`.
-3. Set `ANTHROPIC_API_KEY` for live provider calls.
-4. Install the Anthropic `ant` CLI if you want live managed-agent provisioning and deploys.
-5. Use `THRUFLOW_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
-6. If your provider environment exposes managed-agent APIs at a different base URL, set `ANTHROPIC_BASE_URL` accordingly.
-7. Set `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want connector ingestion enabled.
-8. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
-9. Leave `THRUFLOW_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want remote Anthropic sessions to remain visible after each run.
-10. Install dependencies with `pip install -e .[dev]`.
-11. Run `python scripts/deploy_managed_agents.py`.
-12. Start the API with `uvicorn app.main:app --reload`.
+3. Set `THRUFLOW_WORKSPACE_ID` in real deployment repos so provider-side resources are uniquely namespaced per deployment.
+4. Set `ANTHROPIC_API_KEY` for live provider calls.
+5. Install the Anthropic `ant` CLI if you want live managed-agent provisioning and deploys.
+6. Use `THRUFLOW_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
+7. If your provider environment exposes managed-agent APIs at a different base URL, set `ANTHROPIC_BASE_URL` accordingly.
+8. Set `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want connector ingestion enabled.
+9. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
+10. Leave `THRUFLOW_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want remote Anthropic sessions to remain visible after each run.
+11. Install dependencies with `pip install -e .[dev]`.
+12. Run `python scripts/deploy_managed_agents.py`.
+13. Start the API with `uvicorn app.main:app --reload`.
 
 ## Docker Setup
 
