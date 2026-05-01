@@ -264,10 +264,35 @@ class ClaudeProviderResourceService:
                     )
 
     async def _verify_cached_core_resources(self, environment_id: str, memory_store_id: str) -> tuple[bool, bool]:
-        return (
-            await self.client.environment_exists(environment_id),
-            await self.client.memory_store_exists(memory_store_id),
-        )
+        environment = await self._retrieve_matching_environment(environment_id)
+        memory_store = await self._retrieve_matching_memory_store(memory_store_id)
+        return environment is not None, memory_store is not None
+
+    async def _retrieve_matching_environment(self, environment_id: str) -> dict[str, object] | None:
+        try:
+            payload = await self.client.retrieve_environment(environment_id)
+        except RuntimeError:
+            return None
+        if payload.get("archived_at"):
+            return None
+        if str(payload.get("name") or "") != self._environment_name():
+            return None
+        metadata = payload.get("metadata") or {}
+        if str(metadata.get("workspace_id") or "") != self.config.get_workspace_id():
+            return None
+        return payload
+
+    async def _retrieve_matching_memory_store(self, memory_store_id: str) -> dict[str, object] | None:
+        try:
+            payload = await self.client.retrieve_memory_store(memory_store_id)
+        except RuntimeError:
+            return None
+        if str(payload.get("name") or "") != self._memory_store_name():
+            return None
+        metadata = payload.get("metadata") or {}
+        if str(metadata.get("workspace_id") or "") != self.config.get_workspace_id():
+            return None
+        return payload
 
     def resolve_agent_provider_id(self, agent_id: str) -> str:
         if self.config.settings.lightwire_fake_claude:

@@ -180,6 +180,45 @@ def test_live_agent_deploy_prefers_cached_agent_id(tmp_path) -> None:
     assert not any(args[:2] == ["beta:agents", "list"] for args, _ in calls)
 
 
+def test_match_named_resources_scopes_to_workspace_id(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            lightwire_workspace_id="thruwire-lightwire",
+            lightwire_fake_claude=False,
+        )
+    )
+
+    matches = state.claude._match_named_resources(
+        [
+            {
+                "id": "env_other",
+                "name": "lightwire-thruwire-lightwire-environment",
+                "metadata": {
+                    "managed_agents_repo": "lightwire",
+                    "managed_agents_slug": "default",
+                    "workspace_id": "lightwire-demo",
+                },
+            },
+            {
+                "id": "env_right",
+                "name": "lightwire-thruwire-lightwire-environment",
+                "metadata": {
+                    "managed_agents_repo": "lightwire",
+                    "managed_agents_slug": "default",
+                    "workspace_id": "thruwire-lightwire",
+                },
+            },
+        ],
+        metadata_slug="default",
+        name="lightwire-thruwire-lightwire-environment",
+        workspace_id="thruwire-lightwire",
+    )
+
+    assert [item["id"] for item in matches] == ["env_right"]
+
+
 def test_agent_payload_omits_empty_optional_fields(tmp_path) -> None:
     state = build_state(
         Settings(
@@ -379,6 +418,82 @@ def test_live_resource_ensure_reuses_existing_cached_resources(tmp_path) -> None
     assert create_memory_store_calls == []
     assert state.provider_state.get("claude_managed_agents", "environment", "default").external_id == "env_cached"
     assert state.provider_state.get("claude_managed_agents", "memory_store", "shared").external_id == "mem_cached"
+
+
+def test_live_resource_ensure_repairs_cached_resources_from_different_workspace(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            lightwire_workspace_id="thruwire-lightwire",
+            lightwire_fake_claude=False,
+        )
+    )
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="environment",
+            logical_key="default",
+            external_id="env_wrong",
+            metadata={"workspace_id": "thruwire-lightwire"},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+    state.provider_state.upsert(
+        ProviderStateRecord(
+            provider="claude_managed_agents",
+            resource_type="memory_store",
+            logical_key="shared",
+            external_id="mem_wrong",
+            metadata={"workspace_id": "thruwire-lightwire"},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+
+    async def fake_require_ant() -> None:
+        return None
+
+    async def fake_run_ant_json(args: list[str], payload: dict | None = None) -> dict | list[dict]:
+        if args[:2] == ["beta:environments", "retrieve"]:
+            return {
+                "id": "env_wrong",
+                "name": "lightwire-lightwire-demo-environment",
+                "metadata": {"workspace_id": "lightwire-demo"},
+            }
+        if args[:2] == ["beta:memory-stores", "retrieve"]:
+            return {
+                "id": "mem_wrong",
+                "name": "lightwire-lightwire-demo-shared-memory",
+                "metadata": {"workspace_id": "lightwire-demo"},
+            }
+        raise AssertionError(f"unexpected command: {args}")
+
+    create_environment_calls: list[str] = []
+    create_memory_store_calls: list[str] = []
+
+    async def fake_create_environment(name: str) -> str:
+        create_environment_calls.append(name)
+        return "env_fixed"
+
+    async def fake_create_memory_store(name: str) -> str:
+        create_memory_store_calls.append(name)
+        return "mem_fixed"
+
+    state.claude._require_ant = fake_require_ant  # type: ignore[method-assign]
+    state.claude._run_ant_json = fake_run_ant_json  # type: ignore[method-assign]
+    state.claude.create_environment = fake_create_environment  # type: ignore[method-assign]
+    state.claude.create_memory_store = fake_create_memory_store  # type: ignore[method-assign]
+
+    environment_id, memory_store_id = asyncio.run(state.resources.ensure(verify_remote=True))
+
+    assert environment_id == "env_fixed"
+    assert memory_store_id == "mem_fixed"
+    assert create_environment_calls == ["lightwire-thruwire-lightwire-environment"]
+    assert create_memory_store_calls == ["lightwire-thruwire-lightwire-shared-memory"]
+    assert state.provider_state.get("claude_managed_agents", "environment", "default").external_id == "env_fixed"
+    assert state.provider_state.get("claude_managed_agents", "memory_store", "shared").external_id == "mem_fixed"
 
 
 def test_runtime_ready_raises_when_provider_state_missing(tmp_path) -> None:
@@ -842,6 +957,9 @@ def test_deployment_service_archives_removed_agents_and_vaults_from_state(tmp_pa
     async def fake_archive_agent(agent_id: str) -> None:
         archived_agents.append(agent_id)
 
+    async def fake_retrieve_agent(agent_id: str) -> dict[str, object]:
+        return {"id": agent_id, "metadata": {"managed_agents_repo": "lightwire", "workspace_id": "workspace"}}
+
     async def fake_list_managed_agents() -> list[dict[str, object]]:
         return []
 
@@ -860,17 +978,26 @@ def test_deployment_service_archives_removed_agents_and_vaults_from_state(tmp_pa
     async def fake_vault_exists(vault_id: str) -> bool:
         return vault_id == "vault_obsolete"
 
+    async def fake_retrieve_vault(vault_id: str) -> dict[str, object]:
+        return {"id": vault_id, "metadata": {"managed_agents_repo": "lightwire", "workspace_id": "workspace"}}
+
+    async def fake_retrieve_vault_credential(vault_id: str, credential_id: str) -> dict[str, object]:
+        return {"id": credential_id, "metadata": {"managed_agents_repo": "lightwire", "workspace_id": "workspace"}}
+
     state.resources.ensure = fake_ensure  # type: ignore[method-assign]
     state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
     state.resources.ensure_skills = fake_ensure_skills  # type: ignore[method-assign]
     state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
     state.claude.archive_agent = fake_archive_agent  # type: ignore[method-assign]
+    state.claude.retrieve_agent = fake_retrieve_agent  # type: ignore[method-assign]
     state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
     state.claude.list_managed_vaults = fake_list_managed_vaults  # type: ignore[method-assign]
     state.claude.list_vault_credentials = fake_list_vault_credentials  # type: ignore[method-assign]
     state.claude.archive_vault_credential = fake_archive_vault_credential  # type: ignore[method-assign]
     state.claude.archive_vault = fake_archive_vault  # type: ignore[method-assign]
     state.claude.vault_exists = fake_vault_exists  # type: ignore[method-assign]
+    state.claude.retrieve_vault = fake_retrieve_vault  # type: ignore[method-assign]
+    state.claude.retrieve_vault_credential = fake_retrieve_vault_credential  # type: ignore[method-assign]
 
     asyncio.run(state.deploy.apply())
 
@@ -1030,6 +1157,78 @@ def test_deployment_service_does_not_archive_agents_from_other_workspaces(tmp_pa
     asyncio.run(state.deploy.apply())
 
     assert archived_agents == ["agent_same_workspace_orphan"]
+
+
+def test_deployment_service_does_not_archive_vaults_from_other_workspaces(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            lightwire_fake_claude=False,
+            lightwire_workspace_id="lightwire-demo",
+        )
+    )
+    state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+    state.config.agents["researcher"].skills = []
+    state.config.agents["researcher"].tools.mcp = {}
+
+    archived_vaults: list[str] = []
+
+    async def fake_ensure(*, verify_remote: bool = False) -> tuple[str, str]:
+        return "env", "mem"
+
+    async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_ensure_skills(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(
+        agent,
+        system_prompt: str,
+        *,
+        existing_agent_id: str | None = None,
+        custom_skills: list[dict[str, str]] | None = None,
+    ) -> dict[str, object]:
+        return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
+
+    async def fake_list_managed_agents() -> list[dict[str, object]]:
+        return []
+
+    async def fake_list_managed_vaults() -> list[dict[str, object]]:
+        return [
+            {
+                "id": "vault_other_workspace",
+                "metadata": {
+                    "managed_agents_repo": "lightwire",
+                    "managed_agents_slug": "thruwire-lightwire:shared-mcp",
+                    "workspace_id": "thruwire-lightwire",
+                },
+            },
+            {
+                "id": "vault_same_workspace_orphan",
+                "metadata": {
+                    "managed_agents_repo": "lightwire",
+                    "managed_agents_slug": "lightwire-demo:shared-mcp",
+                    "workspace_id": "lightwire-demo",
+                },
+            },
+        ]
+
+    async def fake_archive_remote_vault_tree(vault_id: str) -> None:
+        archived_vaults.append(vault_id)
+
+    state.resources.ensure = fake_ensure  # type: ignore[method-assign]
+    state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.resources.ensure_skills = fake_ensure_skills  # type: ignore[method-assign]
+    state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
+    state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
+    state.claude.list_managed_vaults = fake_list_managed_vaults  # type: ignore[method-assign]
+    state.deploy._archive_remote_vault_tree = fake_archive_remote_vault_tree  # type: ignore[method-assign]
+
+    asyncio.run(state.deploy.apply())
+
+    assert archived_vaults == ["vault_same_workspace_orphan"]
 
 
 def test_deployment_service_skips_missing_remote_vault_during_reconcile(tmp_path) -> None:

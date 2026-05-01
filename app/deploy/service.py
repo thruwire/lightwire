@@ -79,7 +79,8 @@ class DeploymentService:
         for record in self.provider_state.list_by_type("claude_managed_agents", "agent"):
             if record.logical_key in configured_agent_ids:
                 continue
-            await self.resources.client.archive_agent(record.external_id)
+            if await self._owned_agent(record.external_id):
+                await self.resources.client.archive_agent(record.external_id)
             self.provider_state.delete("claude_managed_agents", "agent", record.logical_key)
 
         for record in self.provider_state.list_by_type("claude_managed_agents", "skill"):
@@ -94,14 +95,15 @@ class DeploymentService:
                 if server_name in configured_mcp_servers:
                     continue
                 vault_id = str(record.metadata.get("vault_id") or "")
-                if vault_id:
+                if vault_id and await self._owned_vault(vault_id) and await self._owned_vault_credential(vault_id, record.external_id):
                     await self.resources.client.archive_vault_credential(vault_id, record.external_id)
             self.provider_state.delete("claude_managed_agents", "vault_credential", record.logical_key)
 
         for record in self.provider_state.list_by_type("claude_managed_agents", "vault"):
             if record.logical_key == "shared" and configured_mcp_servers:
                 continue
-            await self._archive_remote_vault_tree(record.external_id)
+            if await self._owned_vault(record.external_id):
+                await self._archive_remote_vault_tree(record.external_id)
             self.provider_state.delete("claude_managed_agents", "vault", record.logical_key)
 
         # Remote reconciliation catches orphaned Anthropic resources even if the
@@ -118,6 +120,10 @@ class DeploymentService:
 
         configured_vault_slugs = {f"{self.config.get_workspace_id()}:shared-mcp"} if configured_mcp_servers else set()
         for item in await self.resources.client.list_managed_vaults():
+            metadata = item.get("metadata") or {}
+            workspace_id = str(metadata.get("workspace_id") or "")
+            if workspace_id != self.config.get_workspace_id():
+                continue
             slug = str((item.get("metadata") or {}).get("managed_agents_slug") or "")
             if not slug or slug in configured_vault_slugs:
                 continue
@@ -145,3 +151,33 @@ class DeploymentService:
         for credential in await self.resources.client.list_vault_credentials(vault_id):
             await self.resources.client.archive_vault_credential(vault_id, self.resources.client._extract_id(credential))
         await self.resources.client.archive_vault(vault_id)
+
+    async def _owned_agent(self, agent_id: str) -> bool:
+        try:
+            payload = await self.resources.client.retrieve_agent(agent_id)
+        except RuntimeError:
+            return False
+        return self._resource_owned_by_workspace(payload)
+
+    async def _owned_vault(self, vault_id: str) -> bool:
+        try:
+            payload = await self.resources.client.retrieve_vault(vault_id)
+        except RuntimeError:
+            return False
+        return self._resource_owned_by_workspace(payload)
+
+    async def _owned_vault_credential(self, vault_id: str, credential_id: str) -> bool:
+        try:
+            payload = await self.resources.client.retrieve_vault_credential(vault_id, credential_id)
+        except RuntimeError:
+            return False
+        return self._resource_owned_by_workspace(payload)
+
+    def _resource_owned_by_workspace(self, payload: dict[str, object]) -> bool:
+        metadata = payload.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return False
+        return (
+            str(metadata.get("managed_agents_repo") or "") == "lightwire"
+            and str(metadata.get("workspace_id") or "") == self.config.get_workspace_id()
+        )

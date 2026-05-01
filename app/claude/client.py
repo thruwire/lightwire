@@ -82,6 +82,7 @@ class ClaudeManagedAgentClient:
             ["beta:agents", "list", "--limit", "100", "--format", "json"],
             metadata_slug=agent.agent_id,
             name=agent.display_name or agent.agent_id,
+            workspace_id=self.config.get_workspace_id(),
             archive_duplicates=("beta:agents", "--agent-id"),
         )
         if existing is None:
@@ -108,6 +109,12 @@ class ClaudeManagedAgentClient:
 
     async def agent_exists(self, agent_id: str) -> bool:
         return await self._resource_exists(["beta:agents", "retrieve", "--agent-id", agent_id, "--format", "json"])
+
+    async def retrieve_agent(self, agent_id: str) -> dict[str, Any]:
+        if self.config.settings.lightwire_fake_claude:
+            return {"id": agent_id}
+        await self._require_ant()
+        return await self._run_ant_json(["beta:agents", "retrieve", "--agent-id", agent_id, "--format", "json"])
 
     async def list_managed_agents(self) -> list[dict[str, Any]]:
         return await self._list_managed_resources(["beta:agents", "list", "--limit", "100", "--max-items", "-1", "--format", "json"])
@@ -210,11 +217,37 @@ class ClaudeManagedAgentClient:
     async def memory_store_exists(self, memory_store_id: str) -> bool:
         return await self._resource_exists(["beta:memory-stores", "retrieve", "--memory-store-id", memory_store_id, "--format", "json"])
 
+    async def retrieve_environment(self, environment_id: str) -> dict[str, Any]:
+        if self.config.settings.lightwire_fake_claude:
+            return {"id": environment_id}
+        await self._require_ant()
+        return await self._run_ant_json(["beta:environments", "retrieve", "--environment-id", environment_id, "--format", "json"])
+
+    async def retrieve_memory_store(self, memory_store_id: str) -> dict[str, Any]:
+        if self.config.settings.lightwire_fake_claude:
+            return {"id": memory_store_id}
+        await self._require_ant()
+        return await self._run_ant_json(["beta:memory-stores", "retrieve", "--memory-store-id", memory_store_id, "--format", "json"])
+
     async def vault_exists(self, vault_id: str) -> bool:
         return await self._resource_exists(["beta:vaults", "retrieve", "--vault-id", vault_id, "--format", "json"])
 
+    async def retrieve_vault(self, vault_id: str) -> dict[str, Any]:
+        if self.config.settings.lightwire_fake_claude:
+            return {"id": vault_id}
+        await self._require_ant()
+        return await self._run_ant_json(["beta:vaults", "retrieve", "--vault-id", vault_id, "--format", "json"])
+
     async def vault_credential_exists(self, vault_id: str, credential_id: str) -> bool:
         return await self._resource_exists(
+            ["beta:vaults:credentials", "retrieve", "--vault-id", vault_id, "--credential-id", credential_id, "--format", "json"]
+        )
+
+    async def retrieve_vault_credential(self, vault_id: str, credential_id: str) -> dict[str, Any]:
+        if self.config.settings.lightwire_fake_claude:
+            return {"id": credential_id}
+        await self._require_ant()
+        return await self._run_ant_json(
             ["beta:vaults:credentials", "retrieve", "--vault-id", vault_id, "--credential-id", credential_id, "--format", "json"]
         )
 
@@ -263,6 +296,7 @@ class ClaudeManagedAgentClient:
             ["beta:environments", "list", "--limit", "100", "--format", "json"],
             metadata_slug="default",
             name=name,
+            workspace_id=self.config.get_workspace_id(),
             archive_duplicates=("beta:environments", "--environment-id"),
         )
         if existing is None:
@@ -292,6 +326,7 @@ class ClaudeManagedAgentClient:
             ["beta:memory-stores", "list", "--limit", "100", "--format", "json"],
             metadata_slug="shared",
             name=name,
+            workspace_id=self.config.get_workspace_id(),
             archive_duplicates=("beta:memory-stores", "--memory-store-id"),
         )
         if existing is None:
@@ -321,6 +356,7 @@ class ClaudeManagedAgentClient:
             ["beta:vaults", "list", "--limit", "100", "--format", "json"],
             metadata_slug=managed_slug,
             name=display_name,
+            workspace_id=self.config.get_workspace_id(),
             archive_duplicates=("beta:vaults", "--vault-id"),
         )
         if existing is None:
@@ -350,6 +386,7 @@ class ClaudeManagedAgentClient:
             ["beta:vaults:credentials", "list", "--vault-id", vault_id, "--limit", "100", "--format", "json"],
             metadata_slug=managed_slug,
             name=display_name,
+            workspace_id=self.config.get_workspace_id(),
             archive_duplicates=("beta:vaults:credentials", "--credential-id", ["--vault-id", vault_id]),
         )
         payload = {
@@ -382,6 +419,7 @@ class ClaudeManagedAgentClient:
                     ["beta:vaults:credentials", "list", "--vault-id", vault_id, "--limit", "100", "--format", "json"],
                     metadata_slug=managed_slug,
                     name=display_name,
+                    workspace_id=self.config.get_workspace_id(),
                     archive_duplicates=("beta:vaults:credentials", "--credential-id", ["--vault-id", vault_id]),
                 )
                 if existing is None:
@@ -624,10 +662,17 @@ class ClaudeManagedAgentClient:
         metadata_slug: str,
         name: str,
         metadata_key: str = "managed_agents_slug",
+        workspace_id: str | None = None,
         archive_duplicates: tuple[str, str] | tuple[str, str, list[str]] | None = None,
     ) -> dict[str, Any] | None:
         payload = await self._run_ant_json(command)
-        matches = self._match_named_resources(payload, metadata_slug=metadata_slug, name=name, metadata_key=metadata_key)
+        matches = self._match_named_resources(
+            payload,
+            metadata_slug=metadata_slug,
+            name=name,
+            metadata_key=metadata_key,
+            workspace_id=workspace_id,
+        )
         if not matches:
             return None
         matches.sort(key=self._resource_sort_key, reverse=True)
@@ -652,6 +697,7 @@ class ClaudeManagedAgentClient:
         metadata_slug: str,
         name: str,
         metadata_key: str = "managed_agents_slug",
+        workspace_id: str | None = None,
         archive_duplicates: tuple[str, str] | tuple[str, str, list[str]] | None = None,
         attempts: int = 3,
         delay_seconds: float = 1.0,
@@ -662,6 +708,7 @@ class ClaudeManagedAgentClient:
                 metadata_slug=metadata_slug,
                 name=name,
                 metadata_key=metadata_key,
+                workspace_id=workspace_id,
                 archive_duplicates=archive_duplicates,
             )
             if existing is not None:
@@ -677,14 +724,16 @@ class ClaudeManagedAgentClient:
         metadata_slug: str,
         name: str,
         metadata_key: str = "managed_agents_slug",
+        workspace_id: str | None = None,
     ) -> list[dict[str, Any]]:
         matches: list[dict[str, Any]] = []
         for item in self._list_items(payload):
             metadata = item.get("metadata") or {}
             same_repo = metadata.get("managed_agents_repo") == "lightwire"
             same_slug = metadata.get(metadata_key) == metadata_slug
+            same_workspace = workspace_id is None or metadata.get("workspace_id") == workspace_id
             same_name = item.get("name") == name or item.get("display_name") == name
-            if (same_repo and same_slug) or same_name:
+            if same_workspace and ((same_repo and same_slug) or same_name):
                 matches.append(item)
         return matches
 
