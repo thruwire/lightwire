@@ -65,13 +65,9 @@ class ClaudeManagedAgentClient:
                 ["beta:agents", "retrieve", "--agent-id", existing_agent_id, "--format", "json"]
             )
             update_payload = dict(payload)
-            if "version" in existing:
-                update_payload["version"] = existing["version"]
+            update_args = self._build_agent_update_args(existing_agent_id, existing)
             try:
-                return await self._run_ant_json(
-                    ["beta:agents", "update", "--agent-id", existing_agent_id, "--format", "json"],
-                    update_payload,
-                )
+                return await self._run_ant_json(update_args, update_payload)
             except RuntimeError as exc:
                 if not self._is_agent_update_validation_error(exc):
                     raise
@@ -92,13 +88,9 @@ class ClaudeManagedAgentClient:
             return await self._run_ant_json(["beta:agents", "create", "--format", "json"], payload)
         agent_id = self._extract_id(existing)
         update_payload = dict(payload)
-        if "version" in existing:
-            update_payload["version"] = existing["version"]
+        update_args = self._build_agent_update_args(agent_id, existing)
         try:
-            return await self._run_ant_json(
-                ["beta:agents", "update", "--agent-id", agent_id, "--format", "json"],
-                update_payload,
-            )
+            return await self._run_ant_json(update_args, update_payload)
         except RuntimeError as exc:
             if not self._is_agent_update_validation_error(exc):
                 raise
@@ -453,6 +445,14 @@ class ClaudeManagedAgentClient:
         if custom_skills:
             payload["skills"] = custom_skills
         return payload
+
+    def _build_agent_update_args(self, agent_id: str, existing: dict[str, Any]) -> list[str]:
+        args = ["beta:agents", "update", "--agent-id", agent_id]
+        version = existing.get("version")
+        if version is not None:
+            args.extend(["--version", str(version)])
+        args.extend(["--format", "json"])
+        return args
 
     def _is_agent_update_validation_error(self, exc: RuntimeError) -> bool:
         text = str(exc)

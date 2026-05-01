@@ -132,7 +132,10 @@ def test_live_agent_deploy_updates_existing_slug_and_archives_duplicates(tmp_pat
 
     assert result["id"] == "agent_new"
     assert any(args[:2] == ["beta:agents", "archive"] and args[3] == "agent_old" for args, _ in calls)
-    assert any(args[:2] == ["beta:agents", "update"] and args[3] == "agent_new" for args, _ in calls)
+    assert any(
+        args[:2] == ["beta:agents", "update"] and args[3] == "agent_new" and "--version" in args and "2" in args
+        for args, _ in calls
+    )
     assert not any(args[:2] == ["beta:agents", "create"] for args, _ in calls)
 
 
@@ -170,7 +173,10 @@ def test_live_agent_deploy_prefers_cached_agent_id(tmp_path) -> None:
 
     assert result["id"] == "agent_cached"
     assert any(args[:2] == ["beta:agents", "retrieve"] and args[3] == "agent_cached" for args, _ in calls)
-    assert any(args[:2] == ["beta:agents", "update"] and args[3] == "agent_cached" for args, _ in calls)
+    assert any(
+        args[:2] == ["beta:agents", "update"] and args[3] == "agent_cached" and "--version" in args and "5" in args
+        for args, _ in calls
+    )
     assert not any(args[:2] == ["beta:agents", "list"] for args, _ in calls)
 
 

@@ -32,5 +32,5 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WORKSPACE_PATH: ./workspace
-          THRUFLOW_FAKE_CLAUDE: "false"
+          LIGHTWIRE_FAKE_CLAUDE: "false"
         run: python scripts/deploy_managed_agents.py
