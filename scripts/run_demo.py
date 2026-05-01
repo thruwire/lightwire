@@ -15,7 +15,7 @@ from app.utils.time import utc_now
 
 
 async def main() -> None:
-    settings = Settings(thruflow_fake_claude=True)
+    settings = Settings(lightwire_fake_claude=True)
     state = build_state(settings)
     message = NormalizedMessage(
         id=new_id("msg"),

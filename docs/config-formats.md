@@ -1,6 +1,6 @@
 # Config Formats
 
-This page documents every workspace YAML file and the main environment variables used by ThruFlow.
+This page documents every workspace YAML file and the main environment variables used by LightWire.
 
 ## Environment Variables
 
@@ -14,7 +14,7 @@ This page documents every workspace YAML file and the main environment variables
 - `TELEGRAM_BOT_TOKEN`: Telegram Bot API token
 - `WORKSPACE_PATH`: workspace root, defaults to `./workspace`
 - `SQLITE_PATH`: SQLite database path
-- `THRUFLOW_DELETE_COMPLETED_SESSIONS`: whether completed remote Anthropic sessions are deleted after ThruFlow captures the final output, defaults to `true`
+- `LIGHTWIRE_DELETE_COMPLETED_SESSIONS`: whether completed remote Anthropic sessions are deleted after LightWire captures the final output, defaults to `true`
 - MCP secret env vars referenced from `workspace/tools.yaml`
 
 ## `workspace/tools.yaml`
@@ -82,7 +82,7 @@ Supported auth types:
 
 `mcp_oauth_env` expects access-token material to already exist in env at deploy time.
 
-`mcp_oauth_client_credentials_env` expects stable OAuth client settings in env and lets ThruFlow mint the initial token pair during deploy:
+`mcp_oauth_client_credentials_env` expects stable OAuth client settings in env and lets LightWire mint the initial token pair during deploy:
 
 ```yaml
 mcp_servers:
@@ -368,7 +368,7 @@ Required frontmatter fields:
 Expected behavior:
 
 - `name` should be lowercase and hyphenated in the file
-- ThruFlow converts that name into its internal skill key by replacing `-` with `_`
+- LightWire converts that name into its internal skill key by replacing `-` with `_`
 - `description` should describe both what the skill does and when it should be used
 
 The Markdown body below the frontmatter is the reusable execution guidance appended to agent instructions.

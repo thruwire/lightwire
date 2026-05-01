@@ -5,11 +5,11 @@
 1. Copy `.env.example` to `.env`.
 2. Set `ANTHROPIC_API_KEY` if you want live provider calls.
 3. Install the Anthropic `ant` CLI and ensure it is on `PATH`, or set `ANT_BIN` to its location. Current `ant` releases may require a newer Go toolchain when installing from source.
-4. Use `THRUFLOW_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
-5. Leave `ANTHROPIC_BASE_URL` at the public default only if the provider environment you are using exposes the managed-agent APIs ThruFlow needs at runtime.
+4. Use `LIGHTWIRE_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
+5. Leave `ANTHROPIC_BASE_URL` at the public default only if the provider environment you are using exposes the managed-agent APIs LightWire needs at runtime.
 6. Set connector tokens such as `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want polling or Socket Mode enabled.
 7. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
-8. Leave `THRUFLOW_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want Anthropic sessions to remain open for manual follow-up.
+8. Leave `LIGHTWIRE_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want Anthropic sessions to remain open for manual follow-up.
 9. Install dependencies with `pip install -e .[dev]`.
 10. Run `python scripts/deploy_managed_agents.py`.
 11. Start the API with `uvicorn app.main:app --reload`.
@@ -31,7 +31,7 @@ The compose setup:
 
 ## Deploy Behavior
 
-Deployment is explicit. Run the deploy entrypoint when you want ThruFlow to create, update, or repair provider resources:
+Deployment is explicit. Run the deploy entrypoint when you want LightWire to create, update, or repair provider resources:
 
 ```bash
 python scripts/deploy_managed_agents.py
@@ -47,7 +47,7 @@ Deploy/apply:
 
 ## Startup Behavior
 
-On application startup ThruFlow:
+On application startup LightWire:
 
 1. loads the workspace from `WORKSPACE_PATH`
 2. initializes SQLite tables
@@ -56,13 +56,13 @@ On application startup ThruFlow:
 5. starts the heartbeat scheduler
 6. starts enabled connectors
 
-On shutdown ThruFlow stops background loops cleanly.
+On shutdown LightWire stops background loops cleanly.
 
-When a managed-agent run finishes successfully, ThruFlow captures the final output, records the remote session ID in SQLite for traceability, and then deletes the remote Anthropic session by default so the provider console does not fill up with idle leftovers. Set `THRUFLOW_DELETE_COMPLETED_SESSIONS=false` if you intentionally want to keep remote sessions around for manual inspection or continuation.
+When a managed-agent run finishes successfully, LightWire captures the final output, records the remote session ID in SQLite for traceability, and then deletes the remote Anthropic session by default so the provider console does not fill up with idle leftovers. Set `LIGHTWIRE_DELETE_COMPLETED_SESSIONS=false` if you intentionally want to keep remote sessions around for manual inspection or continuation.
 
 ## State Files
 
-ThruFlow persists local orchestration state in SQLite only.
+LightWire persists local orchestration state in SQLite only.
 
 That state includes:
 
@@ -72,7 +72,7 @@ That state includes:
 - provider resource IDs
 - heartbeat timing
 
-Agents can return natural language text. ThruFlow captures that output and uses direct routed outputs as the normal downstream handoff input.
+Agents can return natural language text. LightWire captures that output and uses direct routed outputs as the normal downstream handoff input.
 
 ## Demo
 
@@ -105,5 +105,5 @@ Common checks:
 - inspect `connector_cursors` when a connector appears stuck
 - inspect `provider_state` when provider resources are unexpectedly recreated
 - if startup says provider resources or agents are missing, rerun `python scripts/deploy_managed_agents.py`
-- run with `THRUFLOW_FAKE_CLAUDE=true` only when you intentionally want mock provider behavior
+- run with `LIGHTWIRE_FAKE_CLAUDE=true` only when you intentionally want mock provider behavior
 - if provisioning fails because `ant` is missing, install the Anthropic CLI or set `ANT_BIN`

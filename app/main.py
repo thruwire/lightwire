@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="ThruFlow", lifespan=lifespan)
+    app = FastAPI(title="LightWire", lifespan=lifespan)
 
     @app.get("/healthz", response_model=HealthResponse)
     async def healthz() -> HealthResponse:

@@ -23,7 +23,7 @@ python -m pytest -q
 
 ## Design Principles
 
-When extending ThruFlow, keep these constraints in mind:
+When extending LightWire, keep these constraints in mind:
 
 - normalize source-specific events early
 - keep routing provider-neutral

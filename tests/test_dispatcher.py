@@ -9,7 +9,7 @@ from app.utils.time import utc_now
 
 
 def test_dispatcher_runs_demo_chain(tmp_path) -> None:
-    state = build_state(Settings(sqlite_path=str(tmp_path / "demo.db"), workspace_path="workspace", thruflow_fake_claude=True))
+    state = build_state(Settings(sqlite_path=str(tmp_path / "demo.db"), workspace_path="workspace", lightwire_fake_claude=True))
     message = NormalizedMessage(
         id=new_id("msg"),
         source=MessageSource.API,
@@ -31,7 +31,7 @@ def test_dispatcher_runs_demo_chain(tmp_path) -> None:
 
 def test_dispatcher_accumulates_upstream_outputs_for_chained_agents(tmp_path) -> None:
     state = build_state(
-        Settings(sqlite_path=str(tmp_path / "upstream.db"), workspace_path="workspace", thruflow_fake_claude=True)
+        Settings(sqlite_path=str(tmp_path / "upstream.db"), workspace_path="workspace", lightwire_fake_claude=True)
     )
     message = NormalizedMessage(
         id=new_id("msg"),
@@ -55,7 +55,7 @@ def test_dispatcher_accumulates_upstream_outputs_for_chained_agents(tmp_path) ->
 
 def test_non_slack_root_can_reply_to_explicit_slack_channel(tmp_path) -> None:
     state = build_state(
-        Settings(sqlite_path=str(tmp_path / "reply.db"), workspace_path="workspace", thruflow_fake_claude=True)
+        Settings(sqlite_path=str(tmp_path / "reply.db"), workspace_path="workspace", lightwire_fake_claude=True)
     )
     sent_messages: list[dict[str, object]] = []
 
@@ -66,7 +66,7 @@ def test_non_slack_root_can_reply_to_explicit_slack_channel(tmp_path) -> None:
         async def resolve_channel(self, *, channel_id: str | None = None, channel_name: str | None = None) -> str | None:
             if channel_id:
                 return channel_id
-            if channel_name == "thruflow":
+            if channel_name == "lightwire":
                 return "C123456"
             return None
 
@@ -91,7 +91,7 @@ def test_non_slack_root_can_reply_to_explicit_slack_channel(tmp_path) -> None:
         payload={"content": "Heartbeat result"},
         correlation_id=heartbeat.correlation_id,
         parent_message_id=heartbeat.id,
-        metadata={"reply": {"connector": "slack", "mode": "final_output", "channel_name": "thruflow"}},
+        metadata={"reply": {"connector": "slack", "mode": "final_output", "channel_name": "lightwire"}},
         created_at=utc_now(),
     )
     state.messages.create(heartbeat)

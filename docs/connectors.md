@@ -1,6 +1,6 @@
 # Connectors
 
-ThruFlow connectors are responsible for:
+LightWire connectors are responsible for:
 
 - polling an external source
 - converting source-specific payloads into `NormalizedMessage`
@@ -100,7 +100,7 @@ reply:
 
 When the matching session completes:
 
-1. ThruFlow normalizes the agent output.
+1. LightWire normalizes the agent output.
 2. The dispatcher walks the message parent chain back to the root event.
 3. If the root message came from Telegram, the dispatcher sends the final output back with `sendMessage`.
 4. When available, the original `message_id` is used as `reply_to_message_id`.

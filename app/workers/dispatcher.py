@@ -67,7 +67,7 @@ class Dispatcher:
                 output_message.id,
             )
             await self._handle_reply(output_message, message)
-            # Agent output re-enters the same dispatcher path, which gives ThruFlow simple DAG chaining without a graph engine.
+            # Agent output re-enters the same dispatcher path, which gives LightWire simple DAG chaining without a graph engine.
             await self.dispatch(output_message)
         return created_sessions
 

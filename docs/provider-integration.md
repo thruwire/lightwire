@@ -1,13 +1,13 @@
 # Provider Integration
 
-ThruFlow currently targets Claude Managed Agents through the adapter in `app/claude/`.
+LightWire currently targets Claude Managed Agents through the adapter in `app/claude/`.
 
-Managed-agent provisioning in this repo uses the Anthropic `ant` CLI. ThruFlow uses `ant` to create or update environments, memory stores, vaults, credentials, and agent definitions, then persists the resulting provider IDs in SQLite for later reuse.
+Managed-agent provisioning in this repo uses the Anthropic `ant` CLI. LightWire uses `ant` to create or update environments, memory stores, vaults, credentials, and agent definitions, then persists the resulting provider IDs in SQLite for later reuse.
 
 ## Provider Resource Ownership
 
-ThruFlow manages provider resource IDs itself instead of requiring them in `.env`.
-For deployment repos that share the same Anthropic account/project, `THRUFLOW_WORKSPACE_ID` should be set explicitly so provider-side environments, memory stores, and shared MCP vault resources are uniquely namespaced.
+LightWire manages provider resource IDs itself instead of requiring them in `.env`.
+For deployment repos that share the same Anthropic account/project, `LIGHTWIRE_WORKSPACE_ID` should be set explicitly so provider-side environments, memory stores, and shared MCP vault resources are uniquely namespaced.
 
 Deploy/apply is the mutating path:
 
@@ -36,7 +36,7 @@ These IDs are stored in the `provider_state` table.
 
 ## Endpoint Availability
 
-Provisioning no longer assumes undocumented direct REST paths for environments or vaults. Instead, ThruFlow relies on the Anthropic CLI surface for those resources.
+Provisioning no longer assumes undocumented direct REST paths for environments or vaults. Instead, LightWire relies on the Anthropic CLI surface for those resources.
 
 For live operation you still need:
 
@@ -46,11 +46,11 @@ For live operation you still need:
 
 The deploy wrapper script is `python scripts/deploy_managed_agents.py`, but the deployment logic itself lives in app code under `app/deploy/` and `app/claude/`. That keeps deployment testable and reusable without forcing startup to auto-deploy.
 
-If you want fully mocked behavior for tests or demos, set `THRUFLOW_FAKE_CLAUDE=true` explicitly.
+If you want fully mocked behavior for tests or demos, set `LIGHTWIRE_FAKE_CLAUDE=true` explicitly.
 
 ## Session Construction
 
-For each route dispatch, ThruFlow builds a provider session request from:
+For each route dispatch, LightWire builds a provider session request from:
 
 - agent instructions from `AGENT.md`
 - custom skill attachments resolved from workspace `SKILL.md` packages
@@ -61,7 +61,7 @@ For each route dispatch, ThruFlow builds a provider session request from:
 
 The provider request also includes route and correlation metadata so provider-side activity can be tied back to local orchestration state.
 
-Agents are allowed to respond in natural language. ThruFlow does not require a strict JSON completion contract. The orchestrator captures that output directly and forwards it as routed output data.
+Agents are allowed to respond in natural language. LightWire does not require a strict JSON completion contract. The orchestrator captures that output directly and forwards it as routed output data.
 
 ## Tools And MCP
 
@@ -87,7 +87,7 @@ The Claude adapter translates that into provider-specific payloads such as:
 
 ## Generic Third-Party MCP Servers
 
-ThruFlow is designed to support any third-party MCP server that is reachable over HTTP and can be described in `workspace/tools.yaml`.
+LightWire is designed to support any third-party MCP server that is reachable over HTTP and can be described in `workspace/tools.yaml`.
 
 Current auth patterns:
 
@@ -97,15 +97,15 @@ Current auth patterns:
 
 `mcp_oauth_env` is a compatibility path when you already have token material available externally.
 
-`mcp_oauth_client_credentials_env` is the preferred pattern for OAuth-backed remote MCP servers in managed-agent deployments. With that mode, ThruFlow reads only the stable OAuth client configuration from env, mints the initial access and refresh tokens during deploy, writes an Anthropic vault credential of type `mcp_oauth`, and relies on Anthropic-managed refresh after that.
+`mcp_oauth_client_credentials_env` is the preferred pattern for OAuth-backed remote MCP servers in managed-agent deployments. With that mode, LightWire reads only the stable OAuth client configuration from env, mints the initial access and refresh tokens during deploy, writes an Anthropic vault credential of type `mcp_oauth`, and relies on Anthropic-managed refresh after that.
 
 The repo reads secret values from environment variables, creates or reuses provider vault credentials, and then attaches the resulting vault IDs at session start.
 
-For the common shared-service case, ThruFlow now creates one shared MCP vault per workspace and one credential per configured MCP server, then reuses that shared vault across agents that activate the same server.
+For the common shared-service case, LightWire now creates one shared MCP vault per workspace and one credential per configured MCP server, then reuses that shared vault across agents that activate the same server.
 
 ## Fake Mode
 
-`THRUFLOW_FAKE_CLAUDE=true` is available as an explicit testing and demo switch when you do not want live provider calls.
+`LIGHTWIRE_FAKE_CLAUDE=true` is available as an explicit testing and demo switch when you do not want live provider calls.
 
 In fake mode:
 

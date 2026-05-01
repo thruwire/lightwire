@@ -84,7 +84,7 @@ class ClaudeProviderResourceService:
         if not environment or not memory_store:
             raise RuntimeError(
                 "Provider resources have not been deployed yet. Run the managed-agent deploy step "
-                "before starting ThruFlow in live mode."
+                "before starting LightWire in live mode."
             )
         self.config.attach_provider_state(environment.external_id, memory_store.external_id)
         return environment.external_id, memory_store.external_id
@@ -224,7 +224,7 @@ class ClaudeProviderResourceService:
             if not record:
                 raise RuntimeError(
                     f"Custom skill '{skill_id}' has not been deployed yet. Run the managed-agent deploy step "
-                    "before starting ThruFlow in live mode."
+                    "before starting LightWire in live mode."
                 )
             custom_skills.append({"type": "custom", "skill_id": record.external_id, "version": "latest"})
         return custom_skills
@@ -240,7 +240,7 @@ class ClaudeProviderResourceService:
             if not agent_record:
                 raise RuntimeError(
                     f"Agent '{agent_id}' has not been deployed yet. Run the managed-agent deploy step "
-                    "before starting ThruFlow in live mode."
+                    "before starting LightWire in live mode."
                 )
             server_names = self._enabled_authenticated_mcp_servers(agent_id)
             if not server_names:
@@ -249,7 +249,7 @@ class ClaudeProviderResourceService:
             if not vault_record:
                 raise RuntimeError(
                     "Shared MCP vault has not been deployed yet. Run the managed-agent deploy step "
-                    "before starting ThruFlow in live mode."
+                    "before starting LightWire in live mode."
                 )
             for server_name in server_names:
                 credential = self.repository.get(
@@ -260,7 +260,7 @@ class ClaudeProviderResourceService:
                 if not credential:
                     raise RuntimeError(
                         f"Shared vault credential for MCP server '{server_name}' has not been deployed yet. "
-                        "Run the managed-agent deploy step before starting ThruFlow in live mode."
+                        "Run the managed-agent deploy step before starting LightWire in live mode."
                     )
 
     async def _verify_cached_core_resources(self, environment_id: str, memory_store_id: str) -> tuple[bool, bool]:
@@ -270,21 +270,21 @@ class ClaudeProviderResourceService:
         )
 
     def resolve_agent_provider_id(self, agent_id: str) -> str:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return agent_id
         record = self.repository.get("claude_managed_agents", "agent", agent_id)
         if not record:
             raise RuntimeError(
                 f"Agent '{agent_id}' has not been deployed yet. Run the managed-agent deploy step so "
-                "ThruFlow can persist the provider agent ID before starting live sessions."
+                "LightWire can persist the provider agent ID before starting live sessions."
             )
         return record.external_id
 
     def _environment_name(self) -> str:
-        return f"thruflow-{self.config.get_workspace_id()}-environment"
+        return f"lightwire-{self.config.get_workspace_id()}-environment"
 
     def _memory_store_name(self) -> str:
-        return f"thruflow-{self.config.get_workspace_id()}-shared-memory"
+        return f"lightwire-{self.config.get_workspace_id()}-shared-memory"
 
     async def _build_vault_auth_payload(self, server_name: str) -> dict[str, object]:
         server = self.config.tools.mcp_servers[server_name]
@@ -355,7 +355,7 @@ class ClaudeProviderResourceService:
         if auth_method != "none":
             client_secret = self._require_env(auth.client_secret_env_var, server_name)
 
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return {
                 "access_token": f"mock-{server_name}-access-token",
                 "refresh_token": f"mock-{server_name}-refresh-token",
@@ -451,7 +451,7 @@ class ClaudeProviderResourceService:
         if not env_var:
             raise ValueError(f"MCP server '{server_name}' is missing an environment variable reference in its auth config.")
         value = os.environ.get(env_var, "")
-        if not value and self.config.settings.thruflow_fake_claude:
+        if not value and self.config.settings.lightwire_fake_claude:
             return f"mock-{env_var.lower()}"
         if not value:
             raise ValueError(f"MCP server '{server_name}' requires environment variable '{env_var}' to be set.")

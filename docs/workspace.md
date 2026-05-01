@@ -1,6 +1,6 @@
 # Workspace
 
-ThruFlow loads its workspace from `WORKSPACE_PATH`, which defaults to `./workspace`.
+LightWire loads its workspace from `WORKSPACE_PATH`, which defaults to `./workspace`.
 
 ## Layout
 
@@ -58,9 +58,9 @@ The YAML frontmatter is the source of truth for skill identity and triggering me
 - `name`
 - `description`
 
-In live Claude Managed Agent deploys, ThruFlow uploads each workspace skill as an Anthropic custom skill and attaches the resulting `skill_*` ID to any agent that references it. A later deploy creates a new skill version when the local skill files change. In fake mode, ThruFlow instead inlines the skill body into the agent system prompt.
+In live Claude Managed Agent deploys, LightWire uploads each workspace skill as an Anthropic custom skill and attaches the resulting `skill_*` ID to any agent that references it. A later deploy creates a new skill version when the local skill files change. In fake mode, LightWire instead inlines the skill body into the agent system prompt.
 
-At runtime, ThruFlow appends enabled skill instructions after the agent’s `AGENT.md` content when building the system prompt for a session.
+At runtime, LightWire appends enabled skill instructions after the agent’s `AGENT.md` content when building the system prompt for a session.
 
 ## Prompt Templates
 
@@ -80,12 +80,12 @@ Templates are rendered with Jinja-style variables. Supported context includes:
 - `parent_message_id`
 - `upstream_outputs_text`
 
-If a route references a missing template file, ThruFlow raises a clear `FileNotFoundError`.
+If a route references a missing template file, LightWire raises a clear `FileNotFoundError`.
 
 The normal handoff convention is:
 
 - upstream agents return the output content itself
-- ThruFlow captures that result as a routed output record
+- LightWire captures that result as a routed output record
 - downstream templates primarily consume `upstream_outputs_text`
 
 ## Tools

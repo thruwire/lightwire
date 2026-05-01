@@ -16,7 +16,7 @@ def test_mocked_claude_session_attaches_service_managed_shared_memory(tmp_path) 
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=True,
+            lightwire_fake_claude=True,
         )
     )
     environment_id, memory_store_id = asyncio.run(state.resources.ensure())
@@ -36,7 +36,7 @@ def test_ant_json_parser_accepts_extra_stdout_and_returns_last_object(tmp_path) 
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=True,
+            lightwire_fake_claude=True,
         )
     )
     output = "\n".join(
@@ -55,7 +55,7 @@ def test_retrieve_based_exists_checks_treat_archived_resources_as_missing(tmp_pa
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
 
@@ -92,7 +92,7 @@ def test_live_agent_deploy_updates_existing_slug_and_archives_duplicates(tmp_pat
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     calls: list[tuple[list[str], dict | None]] = []
@@ -109,14 +109,14 @@ def test_live_agent_deploy_updates_existing_slug_and_archives_duplicates(tmp_pat
                     "name": "Researcher",
                     "version": 1,
                     "updated_at": "2026-04-28T12:00:00Z",
-                    "metadata": {"managed_agents_repo": "thruflow", "managed_agents_slug": "researcher"},
+                    "metadata": {"managed_agents_repo": "lightwire", "managed_agents_slug": "researcher"},
                 },
                 {
                     "id": "agent_new",
                     "name": "Researcher",
                     "version": 2,
                     "updated_at": "2026-04-29T12:00:00Z",
-                    "metadata": {"managed_agents_repo": "thruflow", "managed_agents_slug": "researcher"},
+                    "metadata": {"managed_agents_repo": "lightwire", "managed_agents_slug": "researcher"},
                 },
             ]
         if args[:2] == ["beta:agents", "archive"]:
@@ -141,7 +141,7 @@ def test_live_agent_deploy_prefers_cached_agent_id(tmp_path) -> None:
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     calls: list[tuple[list[str], dict | None]] = []
@@ -178,11 +178,13 @@ def test_agent_payload_omits_empty_optional_fields(tmp_path) -> None:
     state = build_state(
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
-            workspace_path="/Users/dev/Documents/GitHub/thruflow-demo/workspace",
-            thruflow_fake_claude=True,
+            workspace_path="workspace",
+            lightwire_fake_claude=True,
         )
     )
-    agent = state.config.get_agent("intake")
+    agent = state.config.get_agent("researcher").model_copy(deep=True)
+    agent.description = None
+    agent.tools.mcp = {}
     payload = state.claude._build_agent_payload(agent, "system prompt")
     assert "description" not in payload
     assert "mcp_servers" not in payload
@@ -193,7 +195,7 @@ def test_agent_payload_includes_custom_skills_when_provided(tmp_path) -> None:
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=True,
+            lightwire_fake_claude=True,
         )
     )
     agent = state.config.get_agent("researcher")
@@ -210,7 +212,7 @@ def test_live_agent_deploy_recreates_when_update_rejected(tmp_path) -> None:
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     calls: list[tuple[list[str], dict | None]] = []
@@ -252,7 +254,7 @@ def test_sdk_session_deletes_completed_remote_session_by_default(tmp_path) -> No
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     state.config.attach_provider_state("env_live", "mem_live")
@@ -323,7 +325,7 @@ def test_live_resource_ensure_reuses_existing_cached_resources(tmp_path) -> None
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     state.provider_state.upsert(
@@ -378,7 +380,7 @@ def test_runtime_ready_raises_when_provider_state_missing(tmp_path) -> None:
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
 
@@ -391,10 +393,11 @@ def test_runtime_ready_uses_cached_provider_state_without_mutation(tmp_path) -> 
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+    state.config.agents["researcher"].skills = []
     state.config.agents["researcher"].tools.mcp = {}
 
     state.provider_state.upsert(
@@ -442,7 +445,7 @@ def test_deploy_verify_remote_recreates_missing_cached_core_resources(tmp_path) 
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     state.provider_state.upsert(
@@ -498,7 +501,7 @@ def test_deploy_verify_remote_recreates_missing_cached_vault_and_credential(tmp_
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     state.provider_state.upsert(
@@ -579,7 +582,7 @@ def test_oauth_client_credentials_bootstrap_builds_refreshable_shared_credential
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
 
@@ -605,7 +608,7 @@ def test_oauth_client_credentials_bootstrap_builds_refreshable_shared_credential
         }
 
     async def fake_create_vault(*, display_name: str, metadata: dict[str, str]) -> str:
-        assert metadata["managed_agents_slug"] == "shared-mcp"
+        assert metadata["managed_agents_slug"] == "workspace:shared-mcp"
         return "vault_shared"
 
     created_credentials: list[dict[str, object]] = []
@@ -647,7 +650,7 @@ def test_oauth_client_credentials_bootstrap_builds_refreshable_shared_credential
     assert len(created_credentials) == 1
     credential = created_credentials[0]
     assert credential["vault_id"] == "vault_shared"
-    assert credential["metadata"]["managed_agents_slug"] == "shared-mcp:external_research"
+    assert credential["metadata"]["managed_agents_slug"] == "workspace:shared-mcp:external_research"
     assert credential["auth"]["type"] == "mcp_oauth"
     assert credential["auth"]["access_token"] == "access-1"
     assert credential["auth"]["expires_at"] == "2026-05-01T00:00:00Z"
@@ -661,7 +664,7 @@ def test_shared_vault_is_reused_across_agents(tmp_path) -> None:
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
 
@@ -706,7 +709,7 @@ def test_deployment_service_applies_and_persists_agent_ids(tmp_path) -> None:
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
 
@@ -768,10 +771,11 @@ def test_deployment_service_archives_removed_agents_and_vaults_from_state(tmp_pa
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+    state.config.agents["researcher"].skills = []
 
     state.provider_state.upsert(
         ProviderStateRecord(
@@ -817,7 +821,16 @@ def test_deployment_service_archives_removed_agents_and_vaults_from_state(tmp_pa
     async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
         return None
 
-    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+    async def fake_ensure_skills(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(
+        agent,
+        system_prompt: str,
+        *,
+        existing_agent_id: str | None = None,
+        custom_skills: list[dict[str, str]] | None = None,
+    ) -> dict[str, object]:
         return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
 
     async def fake_archive_agent(agent_id: str) -> None:
@@ -838,8 +851,12 @@ def test_deployment_service_archives_removed_agents_and_vaults_from_state(tmp_pa
     async def fake_archive_vault(vault_id: str) -> None:
         archived_vaults.append(vault_id)
 
+    async def fake_vault_exists(vault_id: str) -> bool:
+        return vault_id == "vault_obsolete"
+
     state.resources.ensure = fake_ensure  # type: ignore[method-assign]
     state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.resources.ensure_skills = fake_ensure_skills  # type: ignore[method-assign]
     state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
     state.claude.archive_agent = fake_archive_agent  # type: ignore[method-assign]
     state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
@@ -847,6 +864,7 @@ def test_deployment_service_archives_removed_agents_and_vaults_from_state(tmp_pa
     state.claude.list_vault_credentials = fake_list_vault_credentials  # type: ignore[method-assign]
     state.claude.archive_vault_credential = fake_archive_vault_credential  # type: ignore[method-assign]
     state.claude.archive_vault = fake_archive_vault  # type: ignore[method-assign]
+    state.claude.vault_exists = fake_vault_exists  # type: ignore[method-assign]
 
     asyncio.run(state.deploy.apply())
 
@@ -863,10 +881,12 @@ def test_deployment_service_archives_remote_orphaned_agents(tmp_path) -> None:
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+    state.config.agents["researcher"].skills = []
+    state.config.agents["researcher"].skills = []
 
     archived_agents: list[str] = []
 
@@ -876,7 +896,16 @@ def test_deployment_service_archives_remote_orphaned_agents(tmp_path) -> None:
     async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
         return None
 
-    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+    async def fake_ensure_skills(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(
+        agent,
+        system_prompt: str,
+        *,
+        existing_agent_id: str | None = None,
+        custom_skills: list[dict[str, str]] | None = None,
+    ) -> dict[str, object]:
         return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
 
     async def fake_list_managed_agents() -> list[dict[str, object]]:
@@ -884,7 +913,7 @@ def test_deployment_service_archives_remote_orphaned_agents(tmp_path) -> None:
             {
                 "id": "agent_orphan",
                 "metadata": {
-                    "managed_agents_repo": "thruflow",
+                    "managed_agents_repo": "lightwire",
                     "managed_agents_slug": "obsolete",
                     "workspace_id": "workspace",
                 },
@@ -892,7 +921,7 @@ def test_deployment_service_archives_remote_orphaned_agents(tmp_path) -> None:
             {
                 "id": "agent_keep",
                 "metadata": {
-                    "managed_agents_repo": "thruflow",
+                    "managed_agents_repo": "lightwire",
                     "managed_agents_slug": "researcher",
                     "workspace_id": "workspace",
                 },
@@ -907,6 +936,7 @@ def test_deployment_service_archives_remote_orphaned_agents(tmp_path) -> None:
 
     state.resources.ensure = fake_ensure  # type: ignore[method-assign]
     state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.resources.ensure_skills = fake_ensure_skills  # type: ignore[method-assign]
     state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
     state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
     state.claude.archive_agent = fake_archive_agent  # type: ignore[method-assign]
@@ -922,11 +952,12 @@ def test_deployment_service_does_not_archive_agents_from_other_workspaces(tmp_pa
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
-            thruflow_workspace_id="thruflow-demo",
+            lightwire_fake_claude=False,
+            lightwire_workspace_id="lightwire-demo",
         )
     )
-    state.config.agents = {"intake": state.config.agents["intake"].model_copy(deep=True)}
+    state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+    state.config.agents["researcher"].skills = []
 
     archived_agents: list[str] = []
 
@@ -936,7 +967,16 @@ def test_deployment_service_does_not_archive_agents_from_other_workspaces(tmp_pa
     async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
         return None
 
-    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+    async def fake_ensure_skills(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(
+        agent,
+        system_prompt: str,
+        *,
+        existing_agent_id: str | None = None,
+        custom_skills: list[dict[str, str]] | None = None,
+    ) -> dict[str, object]:
         return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
 
     async def fake_list_managed_agents() -> list[dict[str, object]]:
@@ -944,25 +984,25 @@ def test_deployment_service_does_not_archive_agents_from_other_workspaces(tmp_pa
             {
                 "id": "agent_other_workspace",
                 "metadata": {
-                    "managed_agents_repo": "thruflow",
+                    "managed_agents_repo": "lightwire",
                     "managed_agents_slug": "misalignment-agent",
-                    "workspace_id": "thruwire-thruflow",
+                    "workspace_id": "thruwire-lightwire",
                 },
             },
             {
                 "id": "agent_same_workspace_orphan",
                 "metadata": {
-                    "managed_agents_repo": "thruflow",
+                    "managed_agents_repo": "lightwire",
                     "managed_agents_slug": "obsolete",
-                    "workspace_id": "thruflow-demo",
+                    "workspace_id": "lightwire-demo",
                 },
             },
             {
                 "id": "agent_same_workspace_keep",
                 "metadata": {
-                    "managed_agents_repo": "thruflow",
-                    "managed_agents_slug": "intake",
-                    "workspace_id": "thruflow-demo",
+                    "managed_agents_repo": "lightwire",
+                    "managed_agents_slug": "researcher",
+                    "workspace_id": "lightwire-demo",
                 },
             },
         ]
@@ -975,6 +1015,7 @@ def test_deployment_service_does_not_archive_agents_from_other_workspaces(tmp_pa
 
     state.resources.ensure = fake_ensure  # type: ignore[method-assign]
     state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.resources.ensure_skills = fake_ensure_skills  # type: ignore[method-assign]
     state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
     state.claude.list_managed_agents = fake_list_managed_agents  # type: ignore[method-assign]
     state.claude.archive_agent = fake_archive_agent  # type: ignore[method-assign]
@@ -990,10 +1031,11 @@ def test_deployment_service_skips_missing_remote_vault_during_reconcile(tmp_path
         Settings(
             sqlite_path=str(tmp_path / "provider.db"),
             workspace_path="workspace",
-            thruflow_fake_claude=False,
+            lightwire_fake_claude=False,
         )
     )
     state.config.agents = {"researcher": state.config.agents["researcher"].model_copy(deep=True)}
+    state.config.agents["researcher"].skills = []
     state.config.agents["researcher"].tools.mcp = {}
     state.provider_state.upsert(
         ProviderStateRecord(
@@ -1013,7 +1055,16 @@ def test_deployment_service_skips_missing_remote_vault_during_reconcile(tmp_path
     async def fake_ensure_all_agent_vaults(*, verify_remote: bool = False) -> None:
         return None
 
-    async def fake_deploy_agent(agent, system_prompt: str, *, existing_agent_id: str | None = None) -> dict[str, object]:
+    async def fake_ensure_skills(*, verify_remote: bool = False) -> None:
+        return None
+
+    async def fake_deploy_agent(
+        agent,
+        system_prompt: str,
+        *,
+        existing_agent_id: str | None = None,
+        custom_skills: list[dict[str, str]] | None = None,
+    ) -> dict[str, object]:
         return {"id": f"agent_remote_{agent.agent_id}", "name": agent.agent_id, "version": 1}
 
     async def fake_vault_exists(vault_id: str) -> bool:
@@ -1036,6 +1087,7 @@ def test_deployment_service_skips_missing_remote_vault_during_reconcile(tmp_path
 
     state.resources.ensure = fake_ensure  # type: ignore[method-assign]
     state.resources.ensure_all_agent_vaults = fake_ensure_all_agent_vaults  # type: ignore[method-assign]
+    state.resources.ensure_skills = fake_ensure_skills  # type: ignore[method-assign]
     state.claude.deploy_agent = fake_deploy_agent  # type: ignore[method-assign]
     state.claude.vault_exists = fake_vault_exists  # type: ignore[method-assign]
     state.claude.list_vault_credentials = fail_list_vault_credentials  # type: ignore[method-assign]

@@ -43,7 +43,7 @@ class ClaudeManagedAgentClient:
         custom_skills: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         payload = self._build_agent_payload(agent, system_prompt, custom_skills=custom_skills)
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             response = {
                 "id": agent.agent_id,
                 "name": agent.display_name or agent.agent_id,
@@ -124,7 +124,7 @@ class ClaudeManagedAgentClient:
         return await self._list_managed_resources(["beta:vaults", "list", "--limit", "100", "--max-items", "-1", "--format", "json"])
 
     async def list_custom_skills(self) -> list[dict[str, Any]]:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return []
         await self._require_ant()
         payload = await self._run_ant_json(
@@ -144,7 +144,7 @@ class ClaudeManagedAgentClient:
         return matches[0]
 
     async def create_skill(self, display_title: str, skill_dir: Path) -> dict[str, Any]:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return {"id": new_id("skill"), "display_title": display_title, "latest_version": "latest"}
         await self._require_ant()
         with self._pack_skill_directory(skill_dir) as archive_path:
@@ -164,7 +164,7 @@ class ClaudeManagedAgentClient:
             )
 
     async def create_skill_version(self, skill_id: str, skill_dir: Path) -> dict[str, Any]:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return {"skill_id": skill_id, "version": "latest"}
         await self._require_ant()
         with self._pack_skill_directory(skill_dir) as archive_path:
@@ -184,7 +184,7 @@ class ClaudeManagedAgentClient:
             )
 
     async def delete_skill(self, skill_id: str) -> None:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return
         await self._require_ant()
         try:
@@ -193,7 +193,7 @@ class ClaudeManagedAgentClient:
             return
 
     async def list_vault_credentials(self, vault_id: str) -> list[dict[str, Any]]:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return []
         await self._require_ant()
         payload = await self._run_ant_json(
@@ -227,7 +227,7 @@ class ClaudeManagedAgentClient:
         )
 
     async def create_session(self, request: ClaudeSessionRequest) -> ClaudeSessionResult:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return ClaudeSessionResult(
                 external_session_id=new_id("claude_session"),
                 status=SessionStatus.COMPLETED,
@@ -246,13 +246,13 @@ class ClaudeManagedAgentClient:
         )
 
     async def create_environment(self, name: str) -> str:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return new_id("claude_env")
         await self._require_ant()
         payload = {
             "name": name,
             "metadata": {
-                "managed_agents_repo": "thruflow",
+                "managed_agents_repo": "lightwire",
                 "managed_agents_kind": "environment",
                 "managed_agents_slug": "default",
                 "workspace_id": self.config.get_workspace_id(),
@@ -283,14 +283,14 @@ class ClaudeManagedAgentClient:
         return str(data["id"])
 
     async def create_memory_store(self, name: str) -> str:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return new_id("memory_store")
         await self._require_ant()
         payload = {
             "name": name,
-            "description": f"Shared ThruFlow memory for workspace {self.config.get_workspace_id()}.",
+            "description": f"Shared LightWire memory for workspace {self.config.get_workspace_id()}.",
             "metadata": {
-                "managed_agents_repo": "thruflow",
+                "managed_agents_repo": "lightwire",
                 "managed_agents_kind": "memory_store",
                 "managed_agents_slug": "shared",
                 "workspace_id": self.config.get_workspace_id(),
@@ -312,7 +312,7 @@ class ClaudeManagedAgentClient:
         return str(data["id"])
 
     async def create_vault(self, display_name: str, metadata: dict[str, Any]) -> str:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return new_id("vault")
         await self._require_ant()
         managed_slug = str(metadata.get("managed_agents_slug") or metadata.get("agent_id") or display_name)
@@ -320,7 +320,7 @@ class ClaudeManagedAgentClient:
             "display_name": display_name,
             "metadata": metadata
             | {
-                "managed_agents_repo": "thruflow",
+                "managed_agents_repo": "lightwire",
                 "managed_agents_kind": "vault",
                 "managed_agents_slug": managed_slug,
             },
@@ -347,7 +347,7 @@ class ClaudeManagedAgentClient:
         metadata: dict[str, Any],
         auth: dict[str, Any],
     ) -> str:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return new_id("credential")
         await self._require_ant()
         managed_slug = str(
@@ -364,7 +364,7 @@ class ClaudeManagedAgentClient:
             "display_name": display_name,
             "metadata": metadata
             | {
-                "managed_agents_repo": "thruflow",
+                "managed_agents_repo": "lightwire",
                 "managed_agents_kind": "vault_credential",
                 "managed_agents_slug": managed_slug,
             },
@@ -437,7 +437,7 @@ class ClaudeManagedAgentClient:
             "model": {"id": agent.model},
             "system": system_prompt,
             "metadata": {
-                "managed_agents_repo": "thruflow",
+                "managed_agents_repo": "lightwire",
                 "managed_agents_kind": "agent",
                 "managed_agents_slug": agent.agent_id,
                 "agent_id": agent.agent_id,
@@ -463,7 +463,7 @@ class ClaudeManagedAgentClient:
         session = client.beta.sessions.create(
             agent=request.agent_id,
             environment_id=self.config.get_provider_environment_id(),
-            title=f"ThruFlow {request.correlation_id}",
+            title=f"LightWire {request.correlation_id}",
             metadata=request.metadata | {"correlation_id": request.correlation_id, "agent_id": request.agent_id},
             vault_ids=request.vault_ids,
             resources=[
@@ -507,7 +507,7 @@ class ClaudeManagedAgentClient:
                 elif event_type == "session.error":
                     raise RuntimeError(f"Managed-agent session '{session_id}' failed: {json.dumps(event_dict)}")
 
-        if final_status == SessionStatus.COMPLETED and self.config.settings.thruflow_delete_completed_sessions:
+        if final_status == SessionStatus.COMPLETED and self.config.settings.lightwire_delete_completed_sessions:
             cleanup["attempted"] = True
             try:
                 deleted = client.beta.sessions.delete(session_id)
@@ -681,7 +681,7 @@ class ClaudeManagedAgentClient:
         matches: list[dict[str, Any]] = []
         for item in self._list_items(payload):
             metadata = item.get("metadata") or {}
-            same_repo = metadata.get("managed_agents_repo") == "thruflow"
+            same_repo = metadata.get("managed_agents_repo") == "lightwire"
             same_slug = metadata.get(metadata_key) == metadata_slug
             same_name = item.get("name") == name or item.get("display_name") == name
             if (same_repo and same_slug) or same_name:
@@ -738,7 +738,7 @@ class ClaudeManagedAgentClient:
         return update_auth
 
     def _pack_skill_directory(self, skill_dir: Path):
-        temp_file = tempfile.NamedTemporaryFile(prefix="thruflow-skill-", suffix=".zip", delete=False)
+        temp_file = tempfile.NamedTemporaryFile(prefix="lightwire-skill-", suffix=".zip", delete=False)
         temp_path = Path(temp_file.name)
         temp_file.close()
         try:
@@ -768,7 +768,7 @@ class ClaudeManagedAgentClient:
         )
 
     async def _resource_exists(self, args: list[str]) -> bool:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return True
         await self._require_ant()
         try:
@@ -780,7 +780,7 @@ class ClaudeManagedAgentClient:
         return True
 
     async def _archive_resource(self, args: list[str]) -> None:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return
         await self._require_ant()
         try:
@@ -790,14 +790,14 @@ class ClaudeManagedAgentClient:
             return
 
     async def _list_managed_resources(self, args: list[str]) -> list[dict[str, Any]]:
-        if self.config.settings.thruflow_fake_claude:
+        if self.config.settings.lightwire_fake_claude:
             return []
         await self._require_ant()
         payload = await self._run_ant_json(args)
         return [
             item
             for item in self._list_items(payload)
-            if (item.get("metadata") or {}).get("managed_agents_repo") == "thruflow"
+            if (item.get("metadata") or {}).get("managed_agents_repo") == "lightwire"
         ]
 
     async def _run_ant_json(self, args: list[str], payload: dict[str, Any] | None = None) -> dict[str, Any]:

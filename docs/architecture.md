@@ -1,6 +1,6 @@
 # Architecture
 
-ThruFlow is a lightweight orchestrator for agent harnesses. Today it targets Claude Managed Agents, but the internal runtime is structured around provider-neutral concepts:
+LightWire is a lightweight orchestrator for agent harnesses. Today it targets Claude Managed Agents, but the internal runtime is structured around provider-neutral concepts:
 
 - normalized messages
 - route matching
@@ -10,7 +10,7 @@ ThruFlow is a lightweight orchestrator for agent harnesses. Today it targets Cla
 
 ## Direct Routing
 
-ThruFlow uses normalized messages and routed outputs as the handoff mechanism.
+LightWire uses normalized messages and routed outputs as the handoff mechanism.
 
 - connectors, API calls, heartbeats, and agent completions emit normalized messages
 - routes decide which agent session to run next
@@ -44,7 +44,7 @@ That message then moves through the same path:
    - `upstream_outputs`
 7. Feed that message back into the dispatcher so downstream routes can run.
 
-This recursive output-to-message loop gives ThruFlow simple DAG chaining without introducing a separate graph engine.
+This recursive output-to-message loop gives LightWire simple DAG chaining without introducing a separate graph engine.
 
 ## Main Modules
 

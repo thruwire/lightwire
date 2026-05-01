@@ -1,8 +1,8 @@
-# ThruFlow
+# LightWire
 
-ThruFlow is an orchestrator of agent harnesses, currently supporting Claude Managed Agent harnesses while remaining extensible to other managed-agent harnesses over time.
+LightWire is an orchestrator of agent harnesses, currently supporting Claude Managed Agent harnesses while remaining extensible to other managed-agent harnesses over time.
 
-Unlike local multi-agent setups that require your own hardware, ThruFlow relies on Claude Managed Agents so the heavy execution runs in Anthropic’s infrastructure.
+Unlike local multi-agent setups that require your own hardware, LightWire relies on Claude Managed Agents so the heavy execution runs in Anthropic’s infrastructure.
 
 ## Documentation
 
@@ -17,7 +17,7 @@ Unlike local multi-agent setups that require your own hardware, ThruFlow relies 
 
 ## Workspace Structure
 
-ThruFlow loads its provider-neutral workspace from `WORKSPACE_PATH` and expects this layout:
+LightWire loads its provider-neutral workspace from `WORKSPACE_PATH` and expects this layout:
 
 ```text
 workspace/
@@ -51,17 +51,17 @@ Provider-managed memory may still be attached to sessions, but it is not used as
 
 For a deeper breakdown of workspace files and responsibilities, see [docs/workspace.md](./docs/workspace.md).
 
-In live managed-agent deploys, ThruFlow uploads workspace skills through Anthropic's Skills API, creates new skill versions when the local files change, and attaches the resulting custom `skill_*` references to any agents that list those skills in `config.yaml`. In fake mode, the same `SKILL.md` files are inlined into the local system prompt so behavior remains testable without provider calls.
+In live managed-agent deploys, LightWire uploads workspace skills through Anthropic's Skills API, creates new skill versions when the local files change, and attaches the resulting custom `skill_*` references to any agents that list those skills in `config.yaml`. In fake mode, the same `SKILL.md` files are inlined into the local system prompt so behavior remains testable without provider calls.
 
 ## Direct Routed Outputs
 
-ThruFlow uses messages, routes, and captured agent outputs as the control-plane handoff mechanism.
+LightWire uses messages, routes, and captured agent outputs as the control-plane handoff mechanism.
 
-Agent A returns output content. ThruFlow captures that result, stores it in local orchestration state, and routes it directly to Agent B as structured upstream output input. Agents do not need to know provider filesystem paths for normal chaining.
+Agent A returns output content. LightWire captures that result, stores it in local orchestration state, and routes it directly to Agent B as structured upstream output input. Agents do not need to know provider filesystem paths for normal chaining.
 
 ## Tools And MCP
 
-ThruFlow keeps environments internal and places tool configuration at the workspace level.
+LightWire keeps environments internal and places tool configuration at the workspace level.
 
 - Workspace-level tool config declares built-in tool defaults and remote MCP servers.
 - Agent configs activate only the built-in tools and MCP tools they need.
@@ -73,7 +73,7 @@ For direct routed-output workflows, writable filesystem tools are optional rathe
 - `read`, `write`, and `bash` remain available when a particular provider workflow genuinely needs them.
 - `web_search` and `web_fetch` should only be enabled on agents that actually need external research.
 
-For MCP auth, ThruFlow reads secret references from `workspace/tools.yaml`, creates or reuses Anthropic vaults and credentials, stores the resulting IDs in SQLite, and attaches the relevant `vault_ids` when sessions start. This keeps secrets out of reusable agent definitions while still supporting generic third-party MCP servers.
+For MCP auth, LightWire reads secret references from `workspace/tools.yaml`, creates or reuses Anthropic vaults and credentials, stores the resulting IDs in SQLite, and attaches the relevant `vault_ids` when sessions start. This keeps secrets out of reusable agent definitions while still supporting generic third-party MCP servers.
 
 Supported auth patterns in this repo today:
 
@@ -81,20 +81,20 @@ Supported auth patterns in this repo today:
 - `mcp_oauth_env`
 - `mcp_oauth_client_credentials_env`
 
-For OAuth-backed MCP servers, `mcp_oauth_client_credentials_env` is the preferred pattern when your server supports client-credentials bootstrap and returns `access_token`, `refresh_token`, and `expires_in`. ThruFlow mints the initial token pair during deploy, stores the resulting `mcp_oauth` credential in an Anthropic vault, and Anthropic refreshes it later using the stored refresh configuration.
+For OAuth-backed MCP servers, `mcp_oauth_client_credentials_env` is the preferred pattern when your server supports client-credentials bootstrap and returns `access_token`, `refresh_token`, and `expires_in`. LightWire mints the initial token pair during deploy, stores the resulting `mcp_oauth` credential in an Anthropic vault, and Anthropic refreshes it later using the stored refresh configuration.
 
 For the full provider and MCP flow, see [docs/provider-integration.md](./docs/provider-integration.md).
 
 ## Provider Resources
 
-ThruFlow treats deployment as an explicit control-plane operation. The deploy/apply path reads the workspace, verifies or creates managed provider resources, persists their IDs in SQLite, and updates agent definitions. Normal app startup does not auto-deploy; it validates the previously persisted provider state and fails fast if the deploy step has not been run.
+LightWire treats deployment as an explicit control-plane operation. The deploy/apply path reads the workspace, verifies or creates managed provider resources, persists their IDs in SQLite, and updates agent definitions. Normal app startup does not auto-deploy; it validates the previously persisted provider state and fails fast if the deploy step has not been run.
 
 ## Runtime Model
 
 - Messages from API, Slack, Telegram, heartbeats, and agent outputs are normalized into one internal shape.
 - Routes reference prompt template files instead of embedding large prompts inline.
 - Agent outputs become new normalized messages, which lets route chaining implement the Researcher → Analyst → Brief Writer pipeline.
-- Agent final outputs can be natural language; ThruFlow captures and routes that output directly.
+- Agent final outputs can be natural language; LightWire captures and routes that output directly.
 
 The full runtime walk-through is in [docs/architecture.md](./docs/architecture.md).
 - Routes can optionally mark a terminal output for Telegram reply delivery when the originating correlation came from Telegram.
@@ -107,11 +107,11 @@ Heartbeat-driven automation:
 
 - `workspace/heartbeats.yaml` lets you schedule routable prompts on an interval.
 - A heartbeat emits a normalized `heartbeat.tick` message and enters the same routing pipeline as Slack, API, and agent output events.
-- This is useful for recurring research, queue draining, status checks, and scheduled summarization without building a separate scheduler outside ThruFlow.
+- This is useful for recurring research, queue draining, status checks, and scheduled summarization without building a separate scheduler outside LightWire.
 
 Slack request/response agents:
 
-- A user can send a Slack message to ThruFlow, have that message flow through one or more managed agents, and receive the final reply back in Slack at the end of the chain.
+- A user can send a Slack message to LightWire, have that message flow through one or more managed agents, and receive the final reply back in Slack at the end of the chain.
 - Slack is just another normalized message source, so the same route chain can start from `source=slack` and end with a reply action.
 - In practice this makes it straightforward to build a Slack-facing agent flow such as intake → research → response, where the user asks in Slack and gets the finished answer back in Slack, usually in the same thread.
 
@@ -119,7 +119,7 @@ Slack request/response agents:
 
 Agents should return the actual output that downstream agents need.
 
-ThruFlow wraps that result into structured routed output records and includes them in the next step's prompt context.
+LightWire wraps that result into structured routed output records and includes them in the next step's prompt context.
 
 Agents do not need to return JSON.
 
@@ -127,14 +127,14 @@ Agents do not need to return JSON.
 
 1. Copy `.env.example` to `.env`.
 2. Set `WORKSPACE_PATH` if you want a workspace other than `./workspace`.
-3. Set `THRUFLOW_WORKSPACE_ID` in real deployment repos so provider-side resources are uniquely namespaced per deployment.
+3. Set `LIGHTWIRE_WORKSPACE_ID` in real deployment repos so provider-side resources are uniquely namespaced per deployment.
 4. Set `ANTHROPIC_API_KEY` for live provider calls.
 5. Install the Anthropic `ant` CLI if you want live managed-agent provisioning and deploys.
-6. Use `THRUFLOW_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
+6. Use `LIGHTWIRE_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
 7. If your provider environment exposes managed-agent APIs at a different base URL, set `ANTHROPIC_BASE_URL` accordingly.
 8. Set `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want connector ingestion enabled.
 9. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
-10. Leave `THRUFLOW_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want remote Anthropic sessions to remain visible after each run.
+10. Leave `LIGHTWIRE_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want remote Anthropic sessions to remain visible after each run.
 11. Install dependencies with `pip install -e .[dev]`.
 12. Run `python scripts/deploy_managed_agents.py`.
 13. Start the API with `uvicorn app.main:app --reload`.
@@ -155,22 +155,22 @@ Operational details and troubleshooting live in [docs/operations.md](./docs/oper
 
 ## Docker Image
 
-ThruFlow publishes a reusable container image to GitHub Container Registry.
+LightWire publishes a reusable container image to GitHub Container Registry.
 
-- Image name: `ghcr.io/<repo-owner>/thruflow`
+- Image name: `ghcr.io/<repo-owner>/lightwire`
 - The image namespace is based on the GitHub repository owner, so the same workflow works for both org-owned and user-owned repositories.
 - The publish workflow is in [.github/workflows/docker-publish.yml](./.github/workflows/docker-publish.yml).
 
 Example image reference:
 
 ```text
-ghcr.io/YOUR_ORG_OR_USER/thruflow:latest
+ghcr.io/YOUR_ORG_OR_USER/lightwire:latest
 ```
 
 For reproducible deployments, prefer a commit-specific tag:
 
 ```text
-ghcr.io/YOUR_ORG_OR_USER/thruflow:sha-<commit-sha>
+ghcr.io/YOUR_ORG_OR_USER/lightwire:sha-<commit-sha>
 ```
 
 The workflow publishes:
@@ -183,27 +183,27 @@ By default, GHCR packages may be private. To let other repos pull the image easi
 
 ## Deployment Repo Usage
 
-The public ThruFlow repo can publish the base image, while a separate private deployment repo provides the workspace files and secrets.
+The public LightWire repo can publish the base image, while a separate private deployment repo provides the workspace files and secrets.
 
 That deploy repo can pull the published image instead of rebuilding it:
 
 ```yaml
 services:
-  thruflow:
-    image: ghcr.io/YOUR_ORG_OR_USER/thruflow:latest
+  lightwire:
+    image: ghcr.io/YOUR_ORG_OR_USER/lightwire:latest
     env_file:
       - .env
     volumes:
       - ./workspace:/app/workspace:ro
-      - thruflow-data:/app/data
+      - lightwire-data:/app/data
     ports:
       - "8000:8000"
     environment:
       WORKSPACE_PATH: /app/workspace
-      SQLITE_PATH: /app/data/thruflow.db
+      SQLITE_PATH: /app/data/lightwire.db
 
 volumes:
-  thruflow-data:
+  lightwire-data:
 ```
 
 This split keeps the application image reusable while letting the deployment repo own environment-specific workspace config and secrets.
@@ -212,9 +212,9 @@ This split keeps the application image reusable while letting the deployment rep
 
 ## Slack Socket Mode
 
-ThruFlow uses Slack Socket Mode by default.
+LightWire uses Slack Socket Mode by default.
 
-This lets ThruFlow receive Slack events over a WebSocket connection without exposing a public webhook endpoint.
+This lets LightWire receive Slack events over a WebSocket connection without exposing a public webhook endpoint.
 
 Required tokens:
 
@@ -245,11 +245,11 @@ Slack app setup:
 8. Configure `workspace/slack.yaml`.
 9. Ensure the bot is a member of any configured channels.
 
-In Socket Mode, ThruFlow acknowledges Slack envelopes quickly, normalizes supported message events, and routes them through the same dispatcher used by API, Telegram, heartbeats, and agent outputs.
+In Socket Mode, LightWire acknowledges Slack envelopes quickly, normalizes supported message events, and routes them through the same dispatcher used by API, Telegram, heartbeats, and agent outputs.
 
 Slack config supports multiple channels and accepts either `channel_id` or `channel_name`. Channel names are resolved to IDs at connector startup and stored internally as channel IDs. By default, messages in channels only trigger when the bot is explicitly addressed with a mention, though you can also configure accepted prefixes. DMs are supported separately through `behavior.allow_dms`.
 
-This makes a Slack agent flow simple to expose operationally: send a message to your ThruFlow bot in Slack, let the configured route chain run, and get the final reply back in Slack when the flow completes.
+This makes a Slack agent flow simple to expose operationally: send a message to your LightWire bot in Slack, let the configured route chain run, and get the final reply back in Slack when the flow completes.
 
 Example:
 
@@ -272,8 +272,8 @@ Polling remains available as fallback or backfill only and is not recommended as
 - Create a bot with BotFather and place the token in `TELEGRAM_BOT_TOKEN`.
 - Add the allowed chat IDs to `workspace/telegram.yaml`.
 - Start the service and send a text message to the bot.
-- ThruFlow polls Telegram with `getUpdates`, stores the global `update_id` cursor in SQLite, normalizes new messages, and routes them through the same dispatcher as Slack, API, and heartbeats.
-- If a terminal route has `reply.connector: telegram` and `reply.mode: final_output`, ThruFlow sends the final output back with `sendMessage` and uses `reply_to_message_id` when available.
+- LightWire polls Telegram with `getUpdates`, stores the global `update_id` cursor in SQLite, normalizes new messages, and routes them through the same dispatcher as Slack, API, and heartbeats.
+- If a terminal route has `reply.connector: telegram` and `reply.mode: final_output`, LightWire sends the final output back with `sendMessage` and uses `reply_to_message_id` when available.
 
 Connector behavior and extension guidance are documented in [docs/connectors.md](./docs/connectors.md).
 
@@ -300,7 +300,7 @@ curl -X POST http://localhost:8000/events \
 The demo workspace runs this chain:
 
 1. Researcher returns structured research output.
-2. ThruFlow captures that output as routed upstream data.
+2. LightWire captures that output as routed upstream data.
 3. Analyst receives the upstream research output directly in the next prompt and produces analysis.
 4. Brief Writer receives the upstream analysis directly and produces the final brief.
 

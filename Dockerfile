@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir .
 
 ENV PYTHONUNBUFFERED=1
 ENV WORKSPACE_PATH=/app/workspace
-ENV SQLITE_PATH=/app/data/thruflow.db
+ENV SQLITE_PATH=/app/data/lightwire.db
 
 RUN mkdir -p /app/data
 

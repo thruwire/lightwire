@@ -32,11 +32,11 @@ class Settings(BaseSettings):
     slack_app_token: str = ""
     telegram_bot_token: str = ""
     ant_bin: str = "ant"
-    sqlite_path: str = "./data/thruflow.db"
+    sqlite_path: str = "./data/lightwire.db"
     workspace_path: str = "./workspace"
-    thruflow_workspace_id: str = ""
-    thruflow_fake_claude: bool = False
-    thruflow_delete_completed_sessions: bool = True
+    lightwire_workspace_id: str = ""
+    lightwire_fake_claude: bool = False
+    lightwire_delete_completed_sessions: bool = True
     anthropic_base_url: str = "https://api.anthropic.com/v1"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -58,8 +58,8 @@ class RuntimeConfig(BaseModel):
     provider_memory_store_id: str | None = None
 
     def get_workspace_id(self) -> str:
-        if self.settings.thruflow_workspace_id.strip():
-            return self.settings.thruflow_workspace_id.strip()
+        if self.settings.lightwire_workspace_id.strip():
+            return self.settings.lightwire_workspace_id.strip()
         return self.workspace_path.name
 
     def get_agent(self, agent_id: str) -> AgentConfig:
@@ -68,7 +68,7 @@ class RuntimeConfig(BaseModel):
     def get_agent_system_prompt(self, agent_id: str) -> str:
         agent = self.get_agent(agent_id)
         parts = [agent.instructions.strip()]
-        if not self.settings.thruflow_fake_claude:
+        if not self.settings.lightwire_fake_claude:
             return "\n\n".join(part for part in parts if part)
         for skill_id in agent.skills:
             skill = self.skills.get(skill_id)

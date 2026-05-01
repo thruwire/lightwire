@@ -1,5 +1,5 @@
 services:
-  thruflow:
+  lightwire:
     build: .
     ports:
       - "8000:8000"
@@ -7,10 +7,10 @@ services:
       - .env
     volumes:
       - ./workspace:/app/workspace:ro
-      - thruflow_data:/app/data
+      - lightwire_data:/app/data
     environment:
       WORKSPACE_PATH: /app/workspace
-      SQLITE_PATH: /app/data/thruflow.db
+      SQLITE_PATH: /app/data/lightwire.db
 
 volumes:
-  thruflow_data:
+  lightwire_data:

@@ -1,1 +1,1 @@
-"""ThruFlow application package."""
+"""LightWire application package."""

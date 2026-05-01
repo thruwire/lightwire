@@ -1,9 +1,9 @@
 ---
-name: thruflow-workspace-creator
-description: Use when creating or expanding a ThruFlow workspace, including agent folders, skill files, templates, routes, and connector configs.
+name: lightwire-workspace-creator
+description: Use when creating or expanding a LightWire workspace, including agent folders, skill files, templates, routes, and connector configs.
 ---
 
-Use this skill when creating or expanding a ThruFlow workspace for Claude-backed managed agents.
+Use this skill when creating or expanding a LightWire workspace for Claude-backed managed agents.
 
 Requirements:
 - Create agents under `workspace/agents/<agent_id>/` with `config.yaml` and `AGENT.md`.

@@ -1,4 +1,4 @@
-# ThruFlow Docs
+# LightWire Docs
 
 This directory expands the high-level README into focused documents for contributors and operators.
 
