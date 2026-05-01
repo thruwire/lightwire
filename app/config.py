@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     lightwire_workspace_id: str = ""
     lightwire_fake_claude: bool = False
     lightwire_delete_completed_sessions: bool = True
+    lightwire_slack_strict_channel_resolution: bool = True
     anthropic_base_url: str = "https://api.anthropic.com/v1"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

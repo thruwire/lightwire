@@ -473,7 +473,13 @@ class SlackConnector:
             if not resolved_id and channel.channel_name:
                 resolved_id = self._channel_name_cache.get(channel.channel_name)
                 if not resolved_id:
-                    raise RuntimeError(f"Slack channel_name '{channel.channel_name}' could not be resolved to a channel ID.")
+                    if self.config.settings.lightwire_slack_strict_channel_resolution:
+                        raise RuntimeError(f"Slack channel_name '{channel.channel_name}' could not be resolved to a channel ID.")
+                    logger.warning(
+                        "Slack channel_name '%s' could not be resolved to a channel ID; skipping channel restriction entry",
+                        channel.channel_name,
+                    )
+                    continue
                 channel.channel_id = resolved_id
             if resolved_id:
                 allowed_channel_ids.add(resolved_id)

@@ -126,10 +126,10 @@ class ClaudeManagedAgentClient:
         if self.config.settings.lightwire_fake_claude:
             return []
         await self._require_ant()
-        payload = await self._run_ant_json(
+        items = await self._run_ant_json_items(
             ["beta:skills", "list", "--limit", "100", "--max-items", "-1", "--beta", SKILLS_BETA, "--format", "json"]
         )
-        return [item for item in self._list_items(payload) if item.get("source") == "custom"]
+        return [item for item in items if item.get("source") == "custom"]
 
     async def skill_exists(self, skill_id: str) -> bool:
         return await self._resource_exists(["beta:skills", "retrieve", "--skill-id", skill_id, "--beta", SKILLS_BETA, "--format", "json"])
@@ -842,10 +842,10 @@ class ClaudeManagedAgentClient:
         if self.config.settings.lightwire_fake_claude:
             return []
         await self._require_ant()
-        payload = await self._run_ant_json(args)
+        items = await self._run_ant_json_items(args)
         return [
             item
-            for item in self._list_items(payload)
+            for item in items
             if (item.get("metadata") or {}).get("managed_agents_repo") == "lightwire"
         ]
 
@@ -853,7 +853,23 @@ class ClaudeManagedAgentClient:
         output = await self._run_ant_command(args, payload)
         if not output:
             return {}
-        return self._parse_ant_json_output(output, args)
+        parsed_values = self._parse_ant_json_values(output, args)
+        last_value = parsed_values[-1]
+        if isinstance(last_value, dict):
+            return last_value
+        raise RuntimeError(
+            f"Anthropic CLI command produced JSON that did not resolve to a final object: "
+            f"{self.config.settings.ant_bin} {' '.join(args)}\n{output}"
+        )
+
+    async def _run_ant_json_items(self, args: list[str], payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        output = await self._run_ant_command(args, payload)
+        if not output:
+            return []
+        items: list[dict[str, Any]] = []
+        for value in self._parse_ant_json_values(output, args):
+            items.extend(self._list_items(value))
+        return items
 
     async def _run_ant_command(self, args: list[str], payload: dict[str, Any] | None = None) -> str:
         process = await asyncio.create_subprocess_exec(
@@ -874,9 +890,9 @@ class ClaudeManagedAgentClient:
             )
         return stdout.decode().strip()
 
-    def _parse_ant_json_output(self, output: str, args: list[str]) -> dict[str, Any]:
+    def _parse_ant_json_values(self, output: str, args: list[str]) -> list[Any]:
         try:
-            return json.loads(output)
+            return [json.loads(output)]
         except json.JSONDecodeError:
             pass
 
@@ -900,8 +916,8 @@ class ClaudeManagedAgentClient:
             parsed_values.append(value)
             index = next_index
 
-        if parsed_values and isinstance(parsed_values[-1], dict):
-            return parsed_values[-1]
+        if parsed_values:
+            return parsed_values
 
         raise RuntimeError(
             f"Anthropic CLI command produced non-JSON or multi-part output that could not be resolved to a final object: "
