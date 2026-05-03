@@ -30,8 +30,8 @@ class SessionRunner:
 
     async def run_dispatch(self, dispatch: RouteDispatch) -> tuple[SessionRecord, AgentOutputRecord]:
         _, memory_store_id = await self.resources.ensure()
-        # Vault lookup is per agent because tool auth is activated per agent, not per route.
-        vault_ids = await self.resources.ensure_agent_vaults(dispatch.agent_id)
+        # Runtime sessions should reuse the vault IDs provisioned during deploy.
+        vault_ids = self.resources.resolve_agent_vault_ids(dispatch.agent_id)
         provider_agent_id = self.resources.resolve_agent_provider_id(dispatch.agent_id)
         agent = self.config.get_agent(dispatch.agent_id)
         now = utc_now()

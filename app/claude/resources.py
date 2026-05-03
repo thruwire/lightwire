@@ -89,8 +89,39 @@ class ClaudeProviderResourceService:
         self.config.attach_provider_state(environment.external_id, memory_store.external_id)
         return environment.external_id, memory_store.external_id
 
+    def resolve_agent_vault_ids(self, agent_id: str) -> list[str]:
+        """Return previously deployed vault IDs for runtime session creation.
+
+        Managed Agents sessions should reference vaults that were provisioned during
+        the explicit deploy step. Runtime dispatch must stay read-only and avoid
+        reminting or rewriting vault credentials on live traffic.
+        """
+
+        server_names = self._enabled_authenticated_mcp_servers(agent_id)
+        if not server_names:
+            return []
+
+        vault_record = self.repository.get("claude_managed_agents", "vault", self._shared_vault_key())
+        if not vault_record:
+            raise RuntimeError(
+                "Shared MCP vault has not been deployed yet. Run the managed-agent deploy step "
+                "before starting LightWire in live mode."
+            )
+
+        for server_name in server_names:
+            credential = self.repository.get(
+                "claude_managed_agents",
+                "vault_credential",
+                self._shared_credential_key(server_name),
+            )
+            if not credential:
+                raise RuntimeError(
+                    f"Shared vault credential for MCP server '{server_name}' has not been deployed yet. "
+                    "Run the managed-agent deploy step before starting LightWire in live mode."
+                )
+        return [vault_record.external_id]
+
     async def ensure_agent_vaults(self, agent_id: str, *, verify_remote: bool = False) -> list[str]:
-        agent = self.config.get_agent(agent_id)
         server_names = self._enabled_authenticated_mcp_servers(agent_id)
         if not server_names:
             return []
