@@ -1,8 +1,136 @@
 # LightWire
 
-LightWire is an orchestrator of agent harnesses, currently supporting Claude Managed Agent harnesses while remaining extensible to other managed-agent harnesses over time.
+LightWire is a lightweight control plane for multi-agent systems.
 
-Unlike local multi-agent setups that require your own hardware, LightWire relies on Claude Managed Agents so the heavy execution runs in Anthropic’s infrastructure.
+It coordinates workflows across agents, tools, connectors, and scheduled jobs while delegating reasoning, tool execution, and iteration loops to managed agent platforms such as Claude Managed Agents. LightWire decides which agent runs, what context it receives, and where its output goes next. The heavy execution stays in provider infrastructure; LightWire remains a small coordination service.
+
+LightWire lets you build multi-agent systems where the intelligence runs in the cloud, and only the coordination runs locally.
+
+LightWire is part of the ThruWire ecosystem. Learn more at [thruwire.ai](https://thruwire.ai).
+
+## Why It Exists
+
+Managed agents are good at executing work. They are not, by themselves, a complete coordination layer for larger systems.
+
+LightWire exists to make multi-agent workflows explicit:
+
+- routes decide which agent handles which event
+- prompt templates define task-specific inputs
+- captured outputs become structured upstream context for the next step
+- connectors and heartbeats feed the same routing pipeline
+
+Instead of relying on shared memory, ad hoc filesystem conventions, or emergent behavior inside a long-running loop, LightWire gives you a declared control plane for how agents work together.
+
+## What You Can Build
+
+- Multi-agent research -> analysis -> output pipelines
+- Slack-native AI bots that route requests across multiple managed agents
+- Scheduled workflows driven by heartbeat events
+- Tool-augmented agents using built-in tools and remote MCP servers
+- OpenClaw-style automation with explicit routing instead of implicit memory coordination
+
+## Why LightWire
+
+- Declarative orchestration: routes describe system behavior directly
+- Direct agent-to-agent routing: outputs are captured and forwarded explicitly
+- No shared memory or filesystem contract for normal handoffs
+- Cloud-native execution: managed agents perform the heavy work
+- Small control-plane footprint: the coordination service can run on a small VM
+- Built-in connectors: Slack, API, Telegram, and scheduled heartbeats enter the same runtime
+- Provider-neutral architecture: the routing model is not hardcoded to one backend
+- Versionable workspace definition: agents, routes, prompts, tools, and connectors live in files
+
+## Separation Of Concerns
+
+LightWire is deliberately split across two layers:
+
+- Managed agents are the execution layer.
+  They handle reasoning, tool use, and iterative task execution.
+- LightWire is the coordination layer.
+  It decides which agent runs, how messages are routed, and what happens after each result.
+
+That separation is the core design choice in this repo. LightWire does not try to host the agent loop. It coordinates cloud-executed agents into structured workflows.
+
+## LightWire vs OpenClaw-style Agents
+
+| | OpenClaw-style | LightWire |
+|--|--|--|
+| Core model | Agent loop | Control plane |
+| Execution | Local or hosted loop | Managed agents (cloud) |
+| Coordination | Memory / filesystem | Explicit routing |
+| System shape | Emergent | Declared |
+| Infra | Full runtime environment | Small control plane |
+
+OpenClaw executes behavior inside a loop. LightWire defines how multiple agents work together.
+
+## How It Works
+
+The runtime shape is simple:
+
+`event -> route -> agent -> captured output -> next route -> final action`
+
+Inbound events from API, Slack, Telegram, heartbeats, or prior agent outputs are normalized into one message shape. Routes match those messages, render prompt templates, run the target managed agent, capture the result, and optionally feed that result into the next route.
+
+See [Architecture](./docs/architecture.md) for the full runtime model.
+
+## Workspace Model
+
+LightWire loads a versionable workspace from `WORKSPACE_PATH`. That workspace defines:
+
+- agents
+- prompt templates
+- skills
+- tools and MCP servers
+- routes
+- heartbeat schedules
+- connector config
+
+See [Workspace](./docs/workspace.md) for the full file layout and config model.
+
+## Getting Started
+
+The fastest way to start a working local instance is with Docker Compose:
+
+```bash
+cp .env.example .env
+docker compose run --rm lightwire python scripts/deploy_managed_agents.py
+docker compose up --build
+```
+
+To make that work, you need:
+
+- a `.env` file copied from `.env.example`
+- `ANTHROPIC_API_KEY` for live managed-agent execution, or `LIGHTWIRE_FAKE_CLAUDE=true` for local demos and tests
+- the workspace files under `./workspace`, or `WORKSPACE_PATH` pointing to a different workspace
+- connector tokens such as `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, or `TELEGRAM_BOT_TOKEN` only if you want those connectors enabled
+- any MCP secret env vars referenced by `workspace/tools.yaml`
+
+You can also run LightWire locally without Docker:
+
+1. Install dependencies with `pip install -e .[dev]`.
+2. Install the Anthropic `ant` CLI if you want live managed-agent deploys.
+3. Run `python scripts/deploy_managed_agents.py`.
+4. Start the API with `uvicorn app.main:app --reload`.
+
+For hosting, the common shape is a small long-running control-plane service with persistent storage for SQLite and access to the internet for provider and connector APIs. It can run on a laptop for development, a small VM or VPS for simple deployments, or a container platform or Kubernetes cluster if you already operate one.
+
+## Quickstart
+
+1. Copy `.env.example` to `.env`.
+2. Install dependencies with `pip install -e .[dev]`.
+3. Install the Anthropic `ant` CLI if you want live managed-agent deploys.
+4. Set `ANTHROPIC_API_KEY` if you want live managed-agent execution.
+5. Run `python scripts/deploy_managed_agents.py`.
+6. Start the API with `uvicorn app.main:app --reload`.
+
+For containerized startup:
+
+```bash
+docker compose run --rm lightwire python scripts/deploy_managed_agents.py
+docker compose up --build
+```
+
+Operational details live in [docs/operations.md](./docs/operations.md).
 
 ## Documentation
 
@@ -15,275 +143,26 @@ Unlike local multi-agent setups that require your own hardware, LightWire relies
 - [Operations](./docs/operations.md)
 - [Development](./docs/development.md)
 
-## Workspace Structure
+## API Surface
 
-LightWire loads its provider-neutral workspace from `WORKSPACE_PATH` and expects this layout:
+- `GET /healthz`
+- `POST /events`
+- `POST /heartbeats/{heartbeat_id}/run`
+- `GET /messages/{id}`
+- `GET /sessions/{id}`
+- `GET /routes`
+- `GET /heartbeats`
+- `POST /admin/reload-config`
 
-```text
-workspace/
-  agents/
-    <agent_id>/
-      config.yaml
-      AGENT.md
-  skills/
-    <skill_id>/
-      SKILL.md
-  prompt_templates/
-    <template_id>.md
-  tools.yaml
-  routes.yaml
-  heartbeats.yaml
-  slack.yaml
-  telegram.yaml
-```
+## Demo
 
-- `workspace/agents/*/AGENT.md` holds stable provider-neutral agent instructions.
-- `workspace/agents/*/config.yaml` owns per-agent runtime settings such as provider, model, memory access, skills, and tool activation.
-- `workspace/skills/*/SKILL.md` holds reusable custom-skill packages.
-- `workspace/prompt_templates/*.md` holds route-specific task prompts rendered with Jinja-style variables.
-- `workspace/tools.yaml` is the shared tool registry for built-in tools and remote MCP servers.
-- `workspace/routes.yaml` wires messages to agents and prompt templates.
-- `workspace/heartbeats.yaml` defines scheduled routable prompts.
-- `workspace/slack.yaml` defines Slack Socket Mode behavior, channel allowlists, and explicit-address rules.
-- `workspace/telegram.yaml` defines Telegram polling, chat allowlists, and optional final replies.
-
-Provider-managed memory may still be attached to sessions, but it is not used as the normal inter-agent routing contract.
-
-For a deeper breakdown of workspace files and responsibilities, see [docs/workspace.md](./docs/workspace.md).
-
-In live managed-agent deploys, LightWire uploads workspace skills through Anthropic's Skills API, creates new skill versions when the local files change, and attaches the resulting custom `skill_*` references to any agents that list those skills in `config.yaml`. In fake mode, the same `SKILL.md` files are inlined into the local system prompt so behavior remains testable without provider calls.
-
-## Direct Routed Outputs
-
-LightWire uses messages, routes, and captured agent outputs as the control-plane handoff mechanism.
-
-Agent A returns output content. LightWire captures that result, stores it in local orchestration state, and routes it directly to Agent B as structured upstream output input. Agents do not need to know provider filesystem paths for normal chaining.
-
-## Tools And MCP
-
-LightWire keeps environments internal and places tool configuration at the workspace level.
-
-- Workspace-level tool config declares built-in tool defaults and remote MCP servers.
-- Agent configs activate only the built-in tools and MCP tools they need.
-- Claude Managed Agents requires MCP servers to be remote HTTP endpoints; local stdio MCP servers are not sufficient.
-
-For direct routed-output workflows, writable filesystem tools are optional rather than required.
-
-- `web_search` and `web_fetch` are useful for research-oriented agents.
-- `read`, `write`, and `bash` remain available when a particular provider workflow genuinely needs them.
-- `web_search` and `web_fetch` should only be enabled on agents that actually need external research.
-
-For MCP auth, LightWire reads secret references from `workspace/tools.yaml`, creates or reuses Anthropic vaults and credentials, stores the resulting IDs in SQLite, and attaches the relevant `vault_ids` when sessions start. This keeps secrets out of reusable agent definitions while still supporting generic third-party MCP servers.
-
-Supported auth patterns in this repo today:
-
-- `static_bearer_env`
-- `mcp_oauth_env`
-- `mcp_oauth_client_credentials_env`
-
-For OAuth-backed MCP servers, `mcp_oauth_client_credentials_env` is the preferred pattern when your server supports client-credentials bootstrap and returns `access_token`, `refresh_token`, and `expires_in`. LightWire mints the initial token pair during deploy, stores the resulting `mcp_oauth` credential in an Anthropic vault, and Anthropic refreshes it later using the stored refresh configuration.
-
-For the full provider and MCP flow, see [docs/provider-integration.md](./docs/provider-integration.md).
-
-## Provider Resources
-
-LightWire treats deployment as an explicit control-plane operation. The deploy/apply path reads the workspace, verifies or creates managed provider resources, persists their IDs in SQLite, and updates agent definitions. Normal app startup does not auto-deploy; it validates the previously persisted provider state and fails fast if the deploy step has not been run.
-
-## Runtime Model
-
-- Messages from API, Slack, Telegram, heartbeats, and agent outputs are normalized into one internal shape.
-- Routes reference prompt template files instead of embedding large prompts inline.
-- Agent outputs become new normalized messages, which lets route chaining implement the Researcher → Analyst → Brief Writer pipeline.
-- Agent final outputs can be natural language; LightWire captures and routes that output directly.
-
-The full runtime walk-through is in [docs/architecture.md](./docs/architecture.md).
-- Routes can optionally mark a terminal output for Telegram reply delivery when the originating correlation came from Telegram.
-
-## Common Patterns
-
-Two patterns are worth calling out because they are easy to adopt and cover a lot of real usage.
-
-Heartbeat-driven automation:
-
-- `workspace/heartbeats.yaml` lets you schedule routable prompts on an interval.
-- A heartbeat emits a normalized `heartbeat.tick` message and enters the same routing pipeline as Slack, API, and agent output events.
-- This is useful for recurring research, queue draining, status checks, and scheduled summarization without building a separate scheduler outside LightWire.
-
-Slack request/response agents:
-
-- A user can send a Slack message to LightWire, have that message flow through one or more managed agents, and receive the final reply back in Slack at the end of the chain.
-- Slack is just another normalized message source, so the same route chain can start from `source=slack` and end with a reply action.
-- In practice this makes it straightforward to build a Slack-facing agent flow such as intake → research → response, where the user asks in Slack and gets the finished answer back in Slack, usually in the same thread.
-
-## Handoff Convention
-
-Agents should return the actual output that downstream agents need.
-
-LightWire wraps that result into structured routed output records and includes them in the next step's prompt context.
-
-Agents do not need to return JSON.
-
-## Local Setup
-
-1. Copy `.env.example` to `.env`.
-2. Set `WORKSPACE_PATH` if you want a workspace other than `./workspace`.
-3. Set `LIGHTWIRE_WORKSPACE_ID` in real deployment repos so provider-side resources are uniquely namespaced per deployment.
-4. Set `ANTHROPIC_API_KEY` for live provider calls.
-5. Install the Anthropic `ant` CLI if you want live managed-agent provisioning and deploys.
-6. Use `LIGHTWIRE_FAKE_CLAUDE=true` only when you explicitly want mock behavior for tests or local demos.
-7. If your provider environment exposes managed-agent APIs at a different base URL, set `ANTHROPIC_BASE_URL` accordingly.
-8. Set `SLACK_BOT_TOKEN` or `TELEGRAM_BOT_TOKEN` if you want connector ingestion enabled.
-9. Set any MCP secret env vars referenced by `workspace/tools.yaml`.
-10. Leave `LIGHTWIRE_DELETE_COMPLETED_SESSIONS=true` unless you intentionally want remote Anthropic sessions to remain visible after each run.
-11. Install dependencies with `pip install -e .[dev]`.
-12. Run `python scripts/deploy_managed_agents.py`.
-13. Start the API with `uvicorn app.main:app --reload`.
-
-## Docker Setup
-
-Run:
+Run the included demo:
 
 ```bash
-docker compose up --build
+python scripts/run_demo.py
 ```
 
-The compose file mounts `./workspace` into `/app/workspace` as read-only and persists SQLite separately under `/app/data`.
-
-The published image and local Docker build include the Anthropic `ant` CLI so containerized deploy workflows can provision managed-agent resources without requiring `ant` on the host machine.
-
-Operational details and troubleshooting live in [docs/operations.md](./docs/operations.md).
-
-## Docker Image
-
-LightWire publishes a reusable container image to GitHub Container Registry.
-
-- Image name: `ghcr.io/<repo-owner>/lightwire`
-- The image namespace is based on the GitHub repository owner, so the same workflow works for both org-owned and user-owned repositories.
-- The publish workflow is in [.github/workflows/docker-publish.yml](./.github/workflows/docker-publish.yml).
-
-Example image reference:
-
-```text
-ghcr.io/YOUR_ORG_OR_USER/lightwire:latest
-```
-
-For reproducible deployments, prefer a commit-specific tag:
-
-```text
-ghcr.io/YOUR_ORG_OR_USER/lightwire:sha-<commit-sha>
-```
-
-The workflow publishes:
-
-- `latest` on the default branch
-- `sha-<commit-sha>` on every publish
-- `vX.Y.Z` when pushing a matching git tag
-
-By default, GHCR packages may be private. To let other repos pull the image easily, either make the package public in the GitHub Packages UI or authenticate when pulling the image.
-
-## Deployment Repo Usage
-
-The public LightWire repo can publish the base image, while a separate private deployment repo provides the workspace files and secrets.
-
-That deploy repo can pull the published image instead of rebuilding it:
-
-```yaml
-services:
-  lightwire:
-    image: ghcr.io/YOUR_ORG_OR_USER/lightwire:latest
-    env_file:
-      - .env
-    volumes:
-      - ./workspace:/app/workspace:ro
-      - lightwire-data:/app/data
-    ports:
-      - "8000:8000"
-    environment:
-      WORKSPACE_PATH: /app/workspace
-      SQLITE_PATH: /app/data/lightwire.db
-
-volumes:
-  lightwire-data:
-```
-
-This split keeps the application image reusable while letting the deployment repo own environment-specific workspace config and secrets.
-
-## Slack Setup
-
-## Slack Socket Mode
-
-LightWire uses Slack Socket Mode by default.
-
-This lets LightWire receive Slack events over a WebSocket connection without exposing a public webhook endpoint.
-
-Required tokens:
-
-- `SLACK_BOT_TOKEN`
-- `SLACK_APP_TOKEN`
-
-Slack app setup:
-
-1. Create a Slack app.
-2. Enable Socket Mode.
-3. Create an app-level token with `connections:write`.
-4. Add bot token scopes:
-   - `app_mentions:read`
-   - `im:history`
-   - `channels:history`
-   - `channels:read`
-   - `chat:write`
-   - `groups:history` if private channels are used
-   - `groups:read` if private channels are used
-5. Subscribe to bot events:
-   - `app_mention`
-   - `message.im`
-   - `message.channels`
-   - optionally `message.groups`
-   - optionally `message.mpim`
-6. Install the app to the workspace.
-7. Add the tokens to `.env`.
-8. Configure `workspace/slack.yaml`.
-9. Ensure the bot is a member of any configured channels.
-
-In Socket Mode, LightWire acknowledges Slack envelopes quickly, normalizes supported message events, and routes them through the same dispatcher used by API, Telegram, heartbeats, and agent outputs.
-
-Slack config supports multiple channels and accepts either `channel_id` or `channel_name`. Channel names are resolved to IDs at connector startup and stored internally as channel IDs. By default, messages in channels only trigger when the bot is explicitly addressed with a mention, though you can also configure accepted prefixes. DMs are supported separately through `behavior.allow_dms`.
-
-This makes a Slack agent flow simple to expose operationally: send a message to your LightWire bot in Slack, let the configured route chain run, and get the final reply back in Slack when the flow completes.
-
-Example:
-
-```yaml
-channels:
-  - channel_name: "ai-playground"
-  - channel_id: "C123456"
-
-behavior:
-  requires_mention: true
-  allow_dms: true
-  prefixes:
-    - "!tf"
-```
-
-Polling remains available as fallback or backfill only and is not recommended as the primary real-time ingestion path.
-
-## Telegram Setup
-
-- Create a bot with BotFather and place the token in `TELEGRAM_BOT_TOKEN`.
-- Add the allowed chat IDs to `workspace/telegram.yaml`.
-- Start the service and send a text message to the bot.
-- LightWire polls Telegram with `getUpdates`, stores the global `update_id` cursor in SQLite, normalizes new messages, and routes them through the same dispatcher as Slack, API, and heartbeats.
-- If a terminal route has `reply.connector: telegram` and `reply.mode: final_output`, LightWire sends the final output back with `sendMessage` and uses `reply_to_message_id` when available.
-
-Connector behavior and extension guidance are documented in [docs/connectors.md](./docs/connectors.md).
-
-## GitHub Actions Deployment
-
-The repository includes an example workflow at [.github/workflow-examples/deploy-managed-agents.yml.example](./.github/workflow-examples/deploy-managed-agents.yml.example). It shows how to install the Anthropic `ant` CLI and then run `python scripts/deploy_managed_agents.py` from GitHub Actions.
-
-## Demo Walkthrough
-
-Start the service and post an event:
+Or post an API event:
 
 ```bash
 curl -X POST http://localhost:8000/events \
@@ -296,31 +175,3 @@ curl -X POST http://localhost:8000/events \
     }
   }'
 ```
-
-The demo workspace runs this chain:
-
-1. Researcher returns structured research output.
-2. LightWire captures that output as routed upstream data.
-3. Analyst receives the upstream research output directly in the next prompt and produces analysis.
-4. Brief Writer receives the upstream analysis directly and produces the final brief.
-
-You can also run:
-
-```bash
-python scripts/run_demo.py
-```
-
-To exercise the Telegram path, configure `workspace/telegram.yaml`, start the service, and send the bot a text message from an allowed chat. The message will enter the same Researcher → Analyst → Brief Writer pipeline, and the configured terminal route can post the final brief back into Telegram.
-
-## API Endpoints
-
-- `GET /healthz`
-- `POST /events`
-- `POST /heartbeats/{heartbeat_id}/run`
-- `GET /messages/{id}`
-- `GET /sessions/{id}`
-- `GET /routes`
-- `GET /heartbeats`
-- `POST /admin/reload-config`
-
-Contributor guidance and extension notes are in [docs/development.md](./docs/development.md).

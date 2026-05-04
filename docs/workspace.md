@@ -1,6 +1,15 @@
 # Workspace
 
-LightWire loads its workspace from `WORKSPACE_PATH`, which defaults to `./workspace`.
+LightWire loads its versionable control-plane definition from `WORKSPACE_PATH`, which defaults to `./workspace`.
+
+The workspace describes how your multi-agent system is coordinated:
+
+- which agents exist
+- which prompts they receive
+- which tools they can use
+- how messages are routed
+- which heartbeats fire
+- which connectors are enabled
 
 ## Layout
 
@@ -26,14 +35,12 @@ workspace/
 
 Each agent folder contains:
 
-- `config.yaml`: runtime/provider-facing configuration
-- `AGENT.md`: stable identity and operating instructions
+- `config.yaml`: runtime and provider-facing configuration
+- `AGENT.md`: durable identity and operating instructions
 
-The base model is externalized in `config.yaml`, not hardcoded in code or prompts. If you want a specific model for an agent, set `model:` there explicitly.
+Use `AGENT.md` for stable role definition. Put route-specific work in prompt templates, not in the agent file.
 
-`AGENT.md` should describe the durable responsibilities of the agent. Route-specific tasks should not go there; they belong in prompt templates.
-
-Important fields in `workspace/agents/<agent_id>/config.yaml`:
+Important fields in `workspace/agents/<agent_id>/config.yaml` include:
 
 - `agent_id`
 - `enabled`
@@ -47,20 +54,18 @@ Important fields in `workspace/agents/<agent_id>/config.yaml`:
 
 ## Skills
 
-Skills are reusable instruction fragments shared across agents.
+Skills are reusable instruction packages shared across agents.
 
 Each skill folder contains:
 
-- `SKILL.md`: reusable instructions with required YAML frontmatter
+- `SKILL.md`: skill content with required YAML frontmatter
 
-The YAML frontmatter is the source of truth for skill identity and triggering metadata. At minimum it should define:
+At minimum, the frontmatter should define:
 
 - `name`
 - `description`
 
-In live Claude Managed Agent deploys, LightWire uploads each workspace skill as an Anthropic custom skill and attaches the resulting `skill_*` ID to any agent that references it. A later deploy creates a new skill version when the local skill files change. In fake mode, LightWire instead inlines the skill body into the agent system prompt.
-
-At runtime, LightWire appends enabled skill instructions after the agent’s `AGENT.md` content when building the system prompt for a session.
+In live Claude Managed Agent deploys, LightWire uploads workspace skills as Anthropic custom skills and attaches the resulting `skill_*` IDs to agents that reference them. In fake mode, the skill body is inlined into the system prompt so the orchestration path remains testable.
 
 ## Prompt Templates
 
@@ -71,7 +76,7 @@ Routes and heartbeats reference them by workspace-relative path, for example:
 - `prompt_templates/api_to_research.md`
 - `prompt_templates/research_to_analysis.md`
 
-Templates are rendered with Jinja-style variables. Supported context includes:
+Templates are rendered with Jinja-style variables. Common context includes:
 
 - `message`
 - `payload`
@@ -80,68 +85,54 @@ Templates are rendered with Jinja-style variables. Supported context includes:
 - `parent_message_id`
 - `upstream_outputs_text`
 
-If a route references a missing template file, LightWire raises a clear `FileNotFoundError`.
+The normal handoff pattern is explicit:
 
-The normal handoff convention is:
-
-- upstream agents return the output content itself
-- LightWire captures that result as a routed output record
-- downstream templates primarily consume `upstream_outputs_text`
+- an upstream agent returns output content
+- LightWire captures that output as routed state
+- downstream prompts consume the routed upstream context
 
 ## Tools
 
 `workspace/tools.yaml` is the shared tool registry.
 
-It contains:
+It defines:
 
 - built-in tool defaults
 - remote MCP server definitions
 - auth references for MCP credentials
 
-Agent configs then activate the specific built-in tools and MCP servers they need. This keeps infrastructure config at the workspace level and permissions at the agent level.
-
-Agents that do not need external research should generally not activate `web_search` or `web_fetch`.
-
-For OAuth-backed MCP servers, prefer `mcp_oauth_client_credentials_env` in `workspace/tools.yaml` over `mcp_oauth_env` when the token endpoint returns refreshable credentials. That keeps deploy repos focused on stable client configuration instead of transient access-token material.
+Agent configs then opt into the specific tools and MCP servers they need. This keeps infrastructure shared at the workspace level and permissions scoped at the agent level.
 
 ## Routes
 
-`workspace/routes.yaml` wires normalized messages to agent sessions.
+`workspace/routes.yaml` is the core orchestration file.
 
-Each route defines:
+Each route declares:
 
-- `id`
-- `enabled`
-- `match`
-- `target`
-- optional `reply`
-- optional `require_artifacts` for backward compatibility only
+- what message shape it matches
+- which agent should run
+- which prompt template to render
+- whether a connector reply should be emitted at the terminal step
 
-`match` currently supports:
+Current route matching supports:
 
 - `source`
 - `type`
-- optional `agent_id` for matching agent output messages
+- optional `agent_id` for matching agent outputs
 
-`target` specifies:
-
-- `agent_id`
-- `prompt_template`
-
-Optional `reply` is currently used for final Telegram replies.
-
-`require_artifacts` remains in the schema for backward compatibility, but direct routed outputs are the normal handoff mechanism.
+Direct routed outputs are the normal chaining mechanism. `require_artifacts` remains only for backward compatibility.
 
 ## Heartbeats
 
-`workspace/heartbeats.yaml` defines scheduled prompts that emit normalized heartbeat messages and then dispatch them through the normal routing path.
+`workspace/heartbeats.yaml` defines scheduled prompts.
+
+A heartbeat emits a normalized `heartbeat.tick` message, then enters the same routing path as API, Slack, Telegram, and agent-output events.
 
 ## Connector Config
 
-- `workspace/slack.yaml` controls Slack Socket Mode by default, with polling fallback available
-- Slack config supports multiple channels, DMs, explicit-address rules, and `channel_name` to `channel_id` resolution at startup
-- `workspace/telegram.yaml` controls Telegram polling and allowed chat IDs
+- `workspace/slack.yaml` configures Slack Socket Mode by default, with polling fallback available
+- `workspace/telegram.yaml` configures Telegram polling and allowed chat behavior
 
-Both connectors are optional. Missing `telegram.yaml` loads as disabled.
+Both connectors are optional.
 
-For a field-by-field reference for every workspace YAML file, see [config-formats.md](./config-formats.md).
+For the full field-by-field schema, see [Config Formats](./config-formats.md).

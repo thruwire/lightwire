@@ -2,6 +2,8 @@
 
 This page documents every workspace YAML file and the main environment variables used by LightWire.
 
+All examples on this page are sanitized and illustrative. They are intended to show the shape of a working workspace without copying any real deployment configuration.
+
 ## Environment Variables
 
 `.env.example` shows the current env surface:
@@ -16,6 +18,19 @@ This page documents every workspace YAML file and the main environment variables
 - `SQLITE_PATH`: SQLite database path
 - `LIGHTWIRE_DELETE_COMPLETED_SESSIONS`: whether completed remote Anthropic sessions are deleted after LightWire captures the final output, defaults to `true`
 - MCP secret env vars referenced from `workspace/tools.yaml`
+
+Example:
+
+```dotenv
+ANTHROPIC_API_KEY=your-provider-key
+ANT_BIN=ant
+WORKSPACE_PATH=./workspace
+SQLITE_PATH=./data/lightwire.db
+SLACK_BOT_TOKEN=xoxb-example
+SLACK_APP_TOKEN=xapp-example
+TELEGRAM_BOT_TOKEN=123456:example
+CATALYST_DOCS_MCP_TOKEN=replace-me
+```
 
 ## `workspace/tools.yaml`
 
@@ -50,6 +65,49 @@ mcp_servers:
     auth:
       type: static_bearer_env
       token_env_var: EXTERNAL_RESEARCH_MCP_TOKEN
+```
+
+Detailed sanitized example:
+
+```yaml
+built_in:
+  bash:
+    enabled: true
+    permission_policy: always_allow
+  read:
+    enabled: true
+    permission_policy: always_allow
+  write:
+    enabled: false
+    permission_policy: always_ask
+  web_fetch:
+    enabled: true
+    permission_policy: always_allow
+  web_search:
+    enabled: true
+    permission_policy: always_allow
+
+mcp_servers:
+  catalyst_docs:
+    enabled: true
+    type: url
+    url: ${CATALYST_DOCS_MCP_URL:-https://mcp.example.net/docs}
+    permission_policy: always_allow
+    auth:
+      type: static_bearer_env
+      token_env_var: CATALYST_DOCS_MCP_TOKEN
+
+  ledger_api:
+    enabled: ${LEDGER_MCP_ENABLED:-false}
+    type: url
+    url: ${LEDGER_MCP_URL:-https://mcp.example.net/ledger}
+    permission_policy: always_allow
+    auth:
+      type: mcp_oauth_client_credentials_env
+      token_endpoint: ${LEDGER_OAUTH_TOKEN_ENDPOINT}
+      client_id_env_var: LEDGER_MCP_CLIENT_ID
+      client_secret_env_var: LEDGER_MCP_CLIENT_SECRET
+      token_endpoint_auth_method: client_secret_post
 ```
 
 Built-in tool fields:
@@ -121,6 +179,52 @@ routes:
     require_artifacts: false
 ```
 
+Detailed sanitized example:
+
+```yaml
+routes:
+  - id: api_to_triage
+    enabled: true
+    match:
+      source: api
+      type: message.created
+    target:
+      agent_id: triage
+      prompt_template: prompt_templates/api_to_triage.md
+
+  - id: slack_to_triage
+    enabled: true
+    match:
+      source: slack
+      type: message.created
+    target:
+      agent_id: triage
+      prompt_template: prompt_templates/slack_to_triage.md
+
+  - id: triage_to_research
+    enabled: true
+    match:
+      source: agent_output
+      type: agent.completed
+      agent_id: triage
+    target:
+      agent_id: researcher
+      prompt_template: prompt_templates/triage_to_research.md
+
+  - id: research_to_reporter
+    enabled: true
+    match:
+      source: agent_output
+      type: agent.completed
+      agent_id: researcher
+    target:
+      agent_id: reporter
+      prompt_template: prompt_templates/research_to_reporter.md
+    reply:
+      connector: slack
+      mode: final_output
+```
+
 Route fields:
 
 - `id`: unique route key
@@ -173,6 +277,25 @@ heartbeats:
       prompt_template: prompt_templates/heartbeat_research_scout.md
 ```
 
+Detailed sanitized example:
+
+```yaml
+heartbeats:
+  - id: morning_briefing
+    enabled: true
+    interval_seconds: 3600
+    target:
+      agent_id: researcher
+      prompt_template: prompt_templates/morning_briefing.md
+
+  - id: stale_ticket_scan
+    enabled: false
+    interval_seconds: 21600
+    target:
+      agent_id: triage
+      prompt_template: prompt_templates/stale_ticket_scan.md
+```
+
 Fields:
 
 - `id`
@@ -203,6 +326,37 @@ behavior:
   allow_dms: true
   prefixes:
     - "!tf"
+
+socket:
+  reconnect: true
+  ack_timeout_seconds: 3
+
+polling:
+  enabled: false
+  poll_interval_seconds: 30
+
+ignore_bot_messages: true
+send_replies: true
+```
+
+Detailed sanitized example:
+
+```yaml
+enabled: true
+mode: socket
+
+channels:
+  - channel_name: "ops-assist"
+    include_threads: true
+  - channel_id: "C99999999"
+    include_threads: false
+
+behavior:
+  requires_mention: true
+  allow_dms: true
+  prefixes:
+    - "!lw"
+    - "/assist"
 
 socket:
   reconnect: true
@@ -276,6 +430,22 @@ ignore_bot_messages: true
 send_replies: true
 ```
 
+Detailed sanitized example:
+
+```yaml
+enabled: true
+poll_interval_seconds: 15
+
+allowed_chats:
+  - chat_id: "100100100"
+    route_key: exec_updates
+  - chat_id: "200200200"
+    route_key: support_queue
+
+ignore_bot_messages: true
+send_replies: true
+```
+
 Fields:
 
 - `enabled`
@@ -317,6 +487,34 @@ tools:
         - fetch_document
 ```
 
+Detailed sanitized example:
+
+```yaml
+agent_id: researcher
+enabled: true
+display_name: Research Analyst
+description: Collects evidence, compares sources, and prepares a downstream handoff.
+provider: claude_managed_agents
+model: claude-sonnet-4-6
+
+memory:
+  access: read_write
+
+skills:
+  - evidence_handbook
+  - concise_handoffs
+
+tools:
+  built_in:
+    - web_search
+    - web_fetch
+  mcp:
+    catalyst_docs:
+      allow:
+        - search_articles
+        - fetch_article
+```
+
 Fields:
 
 - `agent_id`
@@ -343,6 +541,21 @@ Required convention:
 - allow natural language output
 - do not require JSON output
 
+Sanitized example:
+
+```md
+You are the Triage agent.
+
+Your job is to inspect inbound requests, identify the real task, and hand off clear next-step context.
+
+Focus on:
+- the user request
+- missing constraints
+- what the next agent needs to know
+
+Return a concise handoff in natural language.
+```
+
 ## `workspace/skills/<skill_id>/SKILL.md`
 
 Purpose:
@@ -358,6 +571,22 @@ description: Use when the task requires structured synthesis, concise handoffs, 
 ---
 
 Use this skill when the task requires structured synthesis or handoffs.
+```
+
+Sanitized example:
+
+```md
+---
+name: evidence-handbook
+description: Use when the task requires claims to be tied to cited evidence and uncertainty to be explicit.
+---
+
+Use this skill when the task requires evidence-backed synthesis.
+
+Requirements:
+- separate observations from conclusions
+- note uncertainty explicitly
+- keep the output easy for a downstream agent to reuse
 ```
 
 Required frontmatter fields:
@@ -391,3 +620,20 @@ Current convention:
 
 - downstream prompts should primarily consume `upstream_outputs_text`
 - prompts can still mention `payload.content` or `payload.summary` for human context if needed
+
+Sanitized example:
+
+```md
+Summarize the incoming request and prepare a research plan.
+
+User message:
+{{ payload.text }}
+
+If upstream work already exists, reuse it:
+{{ upstream_outputs_text }}
+
+Return:
+- the main question
+- the sub-questions to investigate
+- the likely next agent needed
+```
