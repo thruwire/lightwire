@@ -2,7 +2,6 @@
 
 This page documents every workspace YAML file and the main environment variables used by LightWire.
 
-All examples on this page are sanitized and illustrative. They are intended to show the shape of a working workspace without copying any real deployment configuration.
 
 ## Environment Variables
 
@@ -67,7 +66,7 @@ mcp_servers:
       token_env_var: EXTERNAL_RESEARCH_MCP_TOKEN
 ```
 
-Detailed sanitized example:
+Detailed example:
 
 ```yaml
 built_in:
@@ -179,7 +178,7 @@ routes:
     require_artifacts: false
 ```
 
-Detailed sanitized example:
+Detailed example:
 
 ```yaml
 routes:
@@ -277,7 +276,7 @@ heartbeats:
       prompt_template: prompt_templates/heartbeat_research_scout.md
 ```
 
-Detailed sanitized example:
+Detailed example:
 
 ```yaml
 heartbeats:
@@ -339,7 +338,7 @@ ignore_bot_messages: true
 send_replies: true
 ```
 
-Detailed sanitized example:
+Detailed example:
 
 ```yaml
 enabled: true
@@ -430,7 +429,7 @@ ignore_bot_messages: true
 send_replies: true
 ```
 
-Detailed sanitized example:
+Detailed example:
 
 ```yaml
 enabled: true
@@ -487,7 +486,7 @@ tools:
         - fetch_document
 ```
 
-Detailed sanitized example:
+Detailed example:
 
 ```yaml
 agent_id: researcher
