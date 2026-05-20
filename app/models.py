@@ -37,6 +37,7 @@ class RouteMatch(BaseModel):
     source: MessageSource
     type: MessageType
     agent_id: str | None = None
+    channel: str | None = None
 
 
 class RouteTarget(BaseModel):

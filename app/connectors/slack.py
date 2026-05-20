@@ -225,6 +225,7 @@ class SlackConnector:
             type=MessageType.MESSAGE_CREATED,
             payload={
                 "channel": channel_id,
+                "channel_name": self._channel_name_for_id(channel_id),
                 "user": user,
                 "raw_text": event.get("text", ""),
                 "text": explicit_address["text"],
@@ -609,6 +610,15 @@ class SlackConnector:
         for prefix in self.config.slack.behavior.prefixes:
             if raw_text.startswith(prefix):
                 return prefix
+        return None
+
+    def _channel_name_for_id(self, channel_id: str) -> str | None:
+        for name, cached_id in self._channel_name_cache.items():
+            if cached_id == channel_id:
+                return name
+        for channel in self.config.slack.channels:
+            if channel.channel_id == channel_id:
+                return channel.channel_name
         return None
 
     def _channel_cache_path(self) -> Path:

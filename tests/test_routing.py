@@ -38,6 +38,25 @@ def test_telegram_route_matching() -> None:
     assert route_matches(build_message(source=MessageSource.TELEGRAM), route)
 
 
+def test_route_matching_channel() -> None:
+    config = load_runtime_config(Settings(sqlite_path=":memory:", workspace_path="workspace"))
+    route = next(route for route in config.routes.routes if route.id == "api_to_research")
+    route.match.channel = "C_WIKI"
+    assert route_matches(build_message(payload={"text": "hello", "channel": "C_WIKI"}), route)
+    assert not route_matches(build_message(payload={"text": "hello", "channel": "C_LIGHTWIRE"}), route)
+    assert not route_matches(build_message(payload={"text": "hello"}), route)
+
+
+def test_route_matching_channel_name() -> None:
+    config = load_runtime_config(Settings(sqlite_path=":memory:", workspace_path="workspace"))
+    route = next(route for route in config.routes.routes if route.id == "api_to_research")
+    route.match.channel = "wiki"
+    assert route_matches(build_message(payload={"text": "hello", "channel": "C_WIKI", "channel_name": "wiki"}), route)
+    assert not route_matches(
+        build_message(payload={"text": "hello", "channel": "C_LIGHTWIRE", "channel_name": "lightwire"}), route
+    )
+
+
 def test_prompt_rendering() -> None:
     rendered = render_template(
         "Hello {{ payload.text }} {{ correlation_id }} {{ parent_message_id }}",
