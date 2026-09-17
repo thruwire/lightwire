@@ -49,6 +49,7 @@ class HeartbeatScheduler:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._task
+            self._task = None
 
     async def _run_loop(self) -> None:
         while True:

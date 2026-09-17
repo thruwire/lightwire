@@ -111,6 +111,38 @@ def build_state(settings: Settings | None = None) -> AppState:
     )
 
 
+async def start_background_services(state: AppState) -> None:
+    try:
+        await state.heartbeat_scheduler.start()
+        await state.slack_connector.start()
+        await state.telegram_connector.start()
+    except Exception:
+        await stop_background_services(state)
+        raise
+
+
+async def stop_background_services(state: AppState) -> None:
+    await state.telegram_connector.stop()
+    await state.slack_connector.stop()
+    await state.heartbeat_scheduler.stop()
+
+
+async def reload_app_state(app: FastAPI) -> AppState:
+    current_state = get_state(app)
+    replacement_state = build_state(current_state.config.settings)
+    replacement_state.resources.assert_runtime_ready()
+
+    await stop_background_services(current_state)
+    try:
+        await start_background_services(replacement_state)
+    except Exception:
+        await start_background_services(current_state)
+        raise
+
+    app.state.state = replacement_state
+    return replacement_state
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -118,15 +150,11 @@ async def lifespan(app: FastAPI):
     # Startup only validates previously deployed provider state. Deploy/apply is a
     # separate explicit operation so restarts do not mutate remote resources.
     state.resources.assert_runtime_ready()
-    await state.heartbeat_scheduler.start()
-    await state.slack_connector.start()
-    await state.telegram_connector.start()
+    await start_background_services(state)
     try:
         yield
     finally:
-        await state.heartbeat_scheduler.stop()
-        await state.slack_connector.stop()
-        await state.telegram_connector.stop()
+        await stop_background_services(get_state(app))
 
 
 def create_app() -> FastAPI:
@@ -190,12 +218,7 @@ def create_app() -> FastAPI:
 
     @app.post("/admin/reload-config")
     async def reload_config() -> dict[str, str]:
-        current_state = get_state(app)
-        settings = current_state.config.settings if current_state else None
-        state = build_state(settings)
-        app.state.state = state
-        state.resources.assert_runtime_ready()
-        state.heartbeat_scheduler.initialize()
+        await reload_app_state(app)
         return {"status": "reloaded"}
 
     return app
