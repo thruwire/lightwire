@@ -1,7 +1,9 @@
 import asyncio
+from contextlib import suppress
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from app.config import Settings, load_runtime_config
 from app.connectors.telegram import TelegramConnector
@@ -132,6 +134,36 @@ def test_telegram_send_message_uses_bot_api_endpoint(tmp_path) -> None:
     assert '"reply_to_message_id":99' in str(seen["json"])
     assert response["ok"] is True
     asyncio.run(client.aclose())
+
+
+@pytest.mark.asyncio
+async def test_telegram_poll_loop_continues_after_failure(tmp_path) -> None:
+    db = SqliteDatabase(str(tmp_path / "telegram.db"))
+    db.initialize()
+    config = load_runtime_config(
+        Settings(sqlite_path=str(tmp_path / "telegram.db"), telegram_bot_token="token", workspace_path="workspace")
+    )
+    config.telegram.poll_interval_seconds = 0
+    connector = TelegramConnector(config, SqliteConnectorCursorRepository(db), _noop)
+    attempts = 0
+    recovered = asyncio.Event()
+
+    async def flaky_poll() -> list[NormalizedMessage]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("temporary failure")
+        recovered.set()
+        return []
+
+    connector.poll_once = flaky_poll  # type: ignore[method-assign]
+    task = asyncio.create_task(connector._poll_loop())
+    await asyncio.wait_for(recovered.wait(), timeout=1)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert attempts >= 2
 
 
 def test_final_output_reply_flow_uses_telegram_connector(tmp_path) -> None:

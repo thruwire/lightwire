@@ -307,8 +307,11 @@ class SlackConnector:
 
     async def _polling_loop(self) -> None:
         while True:
-            for message in await self.poll():
-                await self.dispatch_message(message)
+            try:
+                for message in await self.poll():
+                    await self.dispatch_message(message)
+            except Exception:
+                logger.exception("Slack polling failed; retrying after the polling interval")
             await asyncio.sleep(self.config.slack.polling.poll_interval_seconds)
 
     async def _poll_channel(self, client: httpx.AsyncClient, channel_id: str, include_threads: bool) -> list[NormalizedMessage]:

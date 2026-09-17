@@ -97,6 +97,9 @@ class ClaudeProviderResourceService:
         reminting or rewriting vault credentials on live traffic.
         """
 
+        if self.config.settings.lightwire_fake_claude:
+            return []
+
         server_names = self._enabled_authenticated_mcp_servers(agent_id)
         if not server_names:
             return []

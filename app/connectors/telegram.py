@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -14,6 +15,7 @@ from app.utils.time import utc_now
 
 
 DispatchCallback = Callable[[NormalizedMessage], Awaitable[object]]
+logger = logging.getLogger(__name__)
 
 
 class TelegramConnector:
@@ -122,7 +124,12 @@ class TelegramConnector:
 
     async def _poll_loop(self) -> None:
         while True:
-            await self.poll_once()
+            try:
+                await self.poll_once()
+            except Exception:
+                # Telegram bot tokens are embedded in request URLs, so avoid logging
+                # exception text that could disclose the token.
+                logger.error("Telegram polling failed; retrying after the polling interval")
             await asyncio.sleep(self.config.telegram.poll_interval_seconds)
 
     def _store_cursor(self, update_id: int) -> None:

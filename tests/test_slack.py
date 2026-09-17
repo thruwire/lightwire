@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -431,3 +432,31 @@ def test_slack_polling_cursor_logic(tmp_path) -> None:
     assert messages[0].payload["text"] == "hello"
     assert repo.get("slack", "channel:C123456").cursor == "2"
     asyncio.run(client.aclose())
+
+
+@pytest.mark.asyncio
+async def test_slack_polling_loop_continues_after_failure(tmp_path) -> None:
+    repo = _build_repo(tmp_path)
+    config = _build_config(tmp_path)
+    config.slack.mode = SlackMode.POLLING
+    config.slack.polling.poll_interval_seconds = 0
+    connector = SlackConnector(config, repo, _noop_dispatch)
+    attempts = 0
+    recovered = asyncio.Event()
+
+    async def flaky_poll() -> list[NormalizedMessage]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("temporary failure")
+        recovered.set()
+        return []
+
+    connector.poll = flaky_poll  # type: ignore[method-assign]
+    task = asyncio.create_task(connector._polling_loop())
+    await asyncio.wait_for(recovered.wait(), timeout=1)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert attempts >= 2
