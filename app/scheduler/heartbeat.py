@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 
 from app.config import RuntimeConfig
@@ -9,6 +10,9 @@ from app.repositories.heartbeats import HeartbeatRepository
 from app.utils.ids import new_id
 from app.utils.time import utc_now
 from app.workers.dispatcher import Dispatcher
+
+
+logger = logging.getLogger(__name__)
 
 
 class HeartbeatScheduler:
@@ -41,6 +45,8 @@ class HeartbeatScheduler:
                 )
 
     async def start(self) -> None:
+        if self._task is not None:
+            return
         self.initialize()
         self._task = asyncio.create_task(self._run_loop())
 
@@ -53,7 +59,10 @@ class HeartbeatScheduler:
 
     async def _run_loop(self) -> None:
         while True:
-            await self.tick()
+            try:
+                await self.tick()
+            except Exception:
+                logger.exception("Heartbeat scheduler tick failed; retrying after the polling interval")
             await asyncio.sleep(self.sleep_seconds)
 
     async def tick(self) -> None:
