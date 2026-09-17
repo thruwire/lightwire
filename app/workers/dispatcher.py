@@ -26,6 +26,7 @@ class Dispatcher:
         output_handler: OutputHandler,
         telegram_connector: TelegramConnector | None = None,
         slack_connector: SlackConnector | None = None,
+        max_route_depth: int = 32,
     ) -> None:
         self.messages = messages
         self.sessions = sessions
@@ -34,12 +35,19 @@ class Dispatcher:
         self.output_handler = output_handler
         self.telegram_connector = telegram_connector
         self.slack_connector = slack_connector
+        self.max_route_depth = max_route_depth
 
-    async def dispatch(self, message: NormalizedMessage) -> list[str]:
+    async def dispatch(self, message: NormalizedMessage, *, _route_depth: int = 0) -> list[str]:
         # Every event is persisted before routing so downstream debugging can reconstruct the full correlation chain.
         self.messages.create(message)
+        routes = self.router.resolve(message)
+        if routes and _route_depth >= self.max_route_depth:
+            raise RuntimeError(
+                f"Route chain exceeded the maximum depth of {self.max_route_depth} "
+                f"for correlation '{message.correlation_id}'. Check routes for a cycle."
+            )
         created_sessions: list[str] = []
-        for route in self.router.resolve(message):
+        for route in routes:
             logger.info(
                 "Dispatching route route_id=%s source=%s type=%s target_agent=%s correlation_id=%s parent_message_id=%s",
                 route.route_id,
@@ -68,7 +76,7 @@ class Dispatcher:
             )
             await self._handle_reply(output_message, message)
             # Agent output re-enters the same dispatcher path, which gives LightWire simple DAG chaining without a graph engine.
-            await self.dispatch(output_message)
+            await self.dispatch(output_message, _route_depth=_route_depth + 1)
         return created_sessions
 
     async def _handle_reply(self, output_message: NormalizedMessage, parent_message: NormalizedMessage) -> None:

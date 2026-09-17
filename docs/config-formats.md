@@ -15,6 +15,7 @@ This page documents every workspace YAML file and the main environment variables
 - `TELEGRAM_BOT_TOKEN`: Telegram Bot API token
 - `WORKSPACE_PATH`: workspace root, defaults to `./workspace`
 - `SQLITE_PATH`: SQLite database path
+- `LIGHTWIRE_MAX_ROUTE_DEPTH`: maximum number of agent-to-agent route hops, defaults to `32`
 - `LIGHTWIRE_DELETE_COMPLETED_SESSIONS`: whether completed remote Anthropic sessions are deleted after LightWire captures the final output, defaults to `true`
 - MCP secret env vars referenced from `workspace/tools.yaml`
 

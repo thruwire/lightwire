@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from app.config import Settings
 from app.main import build_state
 from app.models import MessageSource, MessageType, NormalizedMessage
@@ -51,6 +53,37 @@ def test_dispatcher_accumulates_upstream_outputs_for_chained_agents(tmp_path) ->
     brief_payload = messages[1]["payload"]
     assert "upstream_outputs" in analyst_payload
     assert "upstream_outputs" in brief_payload
+
+
+def test_dispatcher_stops_cyclic_route_chains_at_configured_depth(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "cycle.db"),
+            workspace_path="workspace",
+            lightwire_fake_claude=True,
+            lightwire_max_route_depth=2,
+        )
+    )
+    entry_route = next(route for route in state.config.routes.routes if route.id == "api_to_research")
+    cycle_route = next(route for route in state.config.routes.routes if route.id == "research_to_analysis").model_copy(deep=True)
+    cycle_route.target.agent_id = "researcher"
+    state.config.routes.routes = [entry_route, cycle_route]
+    message = NormalizedMessage(
+        id=new_id("msg"),
+        source=MessageSource.API,
+        type=MessageType.MESSAGE_CREATED,
+        payload={"text": "cycle check"},
+        correlation_id=new_id("corr"),
+        parent_message_id=None,
+        metadata={},
+        created_at=utc_now(),
+    )
+
+    with pytest.raises(RuntimeError, match="Check routes for a cycle"):
+        asyncio.run(state.dispatcher.dispatch(message))
+
+    sessions = state.db.fetchall("SELECT id FROM sessions")
+    assert len(sessions) == 2
 
 
 def test_non_slack_root_can_reply_to_explicit_slack_channel(tmp_path) -> None:
