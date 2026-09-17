@@ -84,6 +84,7 @@ def build_state(settings: Settings | None = None) -> AppState:
         router=router,
         runner=SessionRunner(config, resources, session_service, sessions, outputs, output_handler),
         output_handler=output_handler,
+        max_route_depth=config.settings.lightwire_max_route_depth,
     )
     slack_connector = SlackConnector(config, cursors, dispatcher.dispatch)
     telegram_connector = TelegramConnector(config, cursors, dispatcher.dispatch)
