@@ -31,6 +31,18 @@ def test_mocked_claude_session_attaches_service_managed_shared_memory(tmp_path) 
     assert again_vault_ids == vault_ids
 
 
+def test_fake_runtime_does_not_require_deployed_vaults(tmp_path) -> None:
+    state = build_state(
+        Settings(
+            sqlite_path=str(tmp_path / "provider.db"),
+            workspace_path="workspace",
+            lightwire_fake_claude=True,
+        )
+    )
+
+    assert state.resources.resolve_agent_vault_ids("researcher") == []
+
+
 def test_ant_json_parser_accepts_extra_stdout_and_returns_last_object(tmp_path) -> None:
     state = build_state(
         Settings(
